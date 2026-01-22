@@ -37,6 +37,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     setState(() {}); // Refresh UI state based on connection
   }
 
+  /*
   Future<void> _setSpeed(double value) async {
     setState(() => _speed = value);
     if (_bluetooth.isConnected) {
@@ -50,6 +51,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       await _bluetooth.write("BD:3,${value.toInt()};");
     }
   }
+  */
 
   Future<void> _downloadFile() async {
     if (widget.productItem == null) return;
@@ -99,6 +101,19 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   }
 
   Future<void> _startCut() async {
+    // 0. Pre-check Remaining Pieces (Local)
+    final remaining = ApiService().currentUser?.remainingPieces ?? 0;
+    if (remaining <= 0) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Error: Not enough pieces left to cut."),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     if (_cutFile == null) {
       // Trigger download first
       _downloadFile();
@@ -109,10 +124,20 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
 
     setState(() {
       _isCutting = true;
-      _status = "Synchronizing Handshake...";
+      _status = "Verifying Balance...";
     });
 
     try {
+      // 0.5. Call API to Record Use (Deduct Balance) - Gatekeeper
+      // If this fails (e.g. server says no pieces), we stop.
+      if (widget.productItem != null) {
+        await ApiService().recordCutterUse(widget.productItem!.id.toString());
+        // If we are here, it succeeded. Local balance is updated by ApiService.
+        setState(() {}); // Refresh UI for new balance
+      }
+
+      setState(() => _status = "Synchronizing Handshake...");
+
       // 0. Perform Handshake Sync (Targeted re-handshake)
       // This ensures we have a valid challenge/password session before starting.
       bool handshakeSuccess = await _performHandshakeSync();
@@ -189,12 +214,6 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       setState(() => _status = "Starting Cut...");
       await _bluetooth.write("BD:100,13;");
 
-      // Record Use API
-      if (widget.productItem != null) {
-        // Fire and forget or await, but check mounted if affecting UI
-        await ApiService().recordCutterUse(widget.productItem!.id.toString());
-      }
-
       setState(() {
         _status = "Cut Started!";
         _isCutting = false;
@@ -207,13 +226,25 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         ),
       );
 
-      // Optionally pop back to list?
-      // Navigator.pop(context);
+      if (mounted) Navigator.pop(context);
     } catch (e) {
+      String errorMsg = e.toString();
+      if (errorMsg.contains("Exception:")) {
+        errorMsg = errorMsg.replaceAll("Exception:", "").trim();
+      }
+
       setState(() {
-        _status = "Error: $e";
+        _status = "Error: $errorMsg";
         _isCutting = false;
       });
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Error: $errorMsg"),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
@@ -225,166 +256,244 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         widget.productItem?.nameAr ??
         "Unknown Product";
 
+    int remaining = ApiService().currentUser?.remainingPieces ?? 0;
+    bool hasBalance = remaining > 0;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text("Cutter Control"),
         backgroundColor: Colors.transparent,
       ),
       backgroundColor: const Color(0xFF121212),
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Product Info
-            Text(
-              name,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 20),
-
-            // Status Card
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: isConnected
-                      ? [const Color(0xFF00FF88), const Color(0xFF00C853)]
-                      : [Colors.grey, Colors.grey.shade700],
-                ),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Column(
-                children: [
-                  Icon(
-                    isConnected
-                        ? Icons.bluetooth_connected
-                        : Icons.bluetooth_disabled,
-                    size: 48,
-                    color: Colors.black,
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    isConnected ? "Connected: $_status" : "Disconnected",
-                    style: const TextStyle(
-                      color: Colors.black,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 40),
-
-            // Connected Controls
-            if (isConnected) ...[
-              // Speed Control
-              const Text(
-                "Speed",
-                style: TextStyle(color: Colors.grey, fontSize: 14),
-              ),
-              Row(
-                children: [
-                  Expanded(
-                    child: Slider(
-                      value: _speed,
-                      min: 1,
-                      max: 20,
-                      activeColor: const Color(0xFF00FF88),
-                      onChanged: _setSpeed,
-                    ),
-                  ),
-                  Text(
-                    "${_speed.toInt()}",
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 18,
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 20),
-
-              // Force Control
-              const Text(
-                "Force",
-                style: TextStyle(color: Colors.grey, fontSize: 14),
-              ),
-              Row(
-                children: [
-                  Expanded(
-                    child: Slider(
-                      value: _force,
-                      min: 1,
-                      max: 30,
-                      activeColor: const Color(0xFF00FF88),
-                      onChanged: _setForce,
-                    ),
-                  ),
-                  Text(
-                    "${_force.toInt()}",
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 18,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-
-            const Spacer(),
-
-            // Action Button
-            SizedBox(
-              height: 60,
-              child: ElevatedButton(
-                onPressed: _isCutting || _isDownloading
-                    ? null
-                    : () {
-                        if (isConnected) {
-                          _startCut();
-                        } else {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const ScanScreen(),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: IntrinsicHeight(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Product Image
+                      if (widget.productItem?.imageUrl.isNotEmpty ?? false)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 20.0),
+                          child: AspectRatio(
+                            aspectRatio: 1.4,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(16),
+                              child: Container(
+                                width: double.infinity,
+                                color: Colors.white.withOpacity(0.05),
+                                child: Image.network(
+                                  widget.productItem!.imageUrl,
+                                  fit: BoxFit.cover,
+                                  width: double.infinity,
+                                  height: double.infinity,
+                                  errorBuilder: (c, e, s) => const Center(
+                                    child: Icon(
+                                      Icons.broken_image,
+                                      color: Colors.grey,
+                                      size: 50,
+                                    ),
+                                  ),
+                                ),
+                              ),
                             ),
-                          ).then((_) => _checkConnection());
-                        }
-                      },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: isConnected
-                      ? const Color(0xFF00FF88)
-                      : const Color(0xFF444444),
-                  foregroundColor: isConnected ? Colors.black : Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  elevation: 5,
-                ),
-                child: _isCutting || _isDownloading
-                    ? const CircularProgressIndicator(color: Colors.black)
-                    : Text(
-                        isConnected ? "SEND TO CUTTER" : "CONNECT TO CUTTER",
+                          ),
+                        ),
+
+                      // Product Info
+                      Text(
+                        name,
                         style: const TextStyle(
-                          fontSize: 18,
+                          color: Colors.white,
+                          fontSize: 24,
                           fontWeight: FontWeight.bold,
                         ),
+                        textAlign: TextAlign.center,
                       ),
+                      const SizedBox(height: 20),
+
+                      // Status Card
+                      /*
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: isConnected
+                        ? [const Color(0xFF00FF88), const Color(0xFF00C853)]
+                        : [Colors.grey, Colors.grey.shade700],
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Column(
+                  children: [
+                    Icon(
+                      isConnected
+                          ? Icons.bluetooth_connected
+                          : Icons.bluetooth_disabled,
+                      size: 48,
+                      color: Colors.black,
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      isConnected
+                          ? (_status == "Ready" ? "Connected" : _status)
+                          : "Disconnected",
+                      style: const TextStyle(
+                        color: Colors.black,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+              */
+                      const SizedBox(height: 40),
+
+                      // Connected Controls
+                      /*
+                      if (isConnected) ...[
+                        // Speed Control
+                        const Text(
+                          "Speed",
+                          style: TextStyle(color: Colors.grey, fontSize: 14),
+                        ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Slider(
+                                value: _speed,
+                                min: 1,
+                                max: 20,
+                                activeColor: const Color(0xFF00FF88),
+                                onChanged: _setSpeed,
+                              ),
+                            ),
+                            Text(
+                              "${_speed.toInt()}",
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 20),
+
+                        // Force Control
+                        const Text(
+                          "Force",
+                          style: TextStyle(color: Colors.grey, fontSize: 14),
+                        ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Slider(
+                                value: _force,
+                                min: 1,
+                                max: 30,
+                                activeColor: const Color(0xFF00FF88),
+                                onChanged: _setForce,
+                              ),
+                            ),
+                            Text(
+                              "${_force.toInt()}",
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                      */
+                      const SizedBox(height: 40),
+
+                      const Spacer(),
+
+                      if (isConnected)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 16.0),
+                          child: Text(
+                            "Remaining: $remaining",
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: hasBalance
+                                  ? const Color(0xFF00FF88)
+                                  : Colors.red,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+
+                      // Action Button
+                      SizedBox(
+                        height: 60,
+                        child: ElevatedButton(
+                          onPressed:
+                              _isCutting ||
+                                  _isDownloading ||
+                                  (!hasBalance && isConnected)
+                              ? null
+                              : () {
+                                  if (isConnected) {
+                                    _startCut();
+                                  } else {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            const ScanScreen(),
+                                      ),
+                                    ).then((_) => _checkConnection());
+                                  }
+                                },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: !hasBalance && isConnected
+                                ? Colors.red.shade900
+                                : (isConnected
+                                      ? const Color(0xFF00FF88)
+                                      : const Color(0xFF444444)),
+                            foregroundColor: isConnected && hasBalance
+                                ? Colors.black
+                                : Colors.white,
+                            disabledBackgroundColor: Colors.grey.shade800,
+                            elevation: 5,
+                          ),
+                          child: _isCutting || _isDownloading
+                              ? const CircularProgressIndicator(
+                                  color: Colors.black,
+                                )
+                              : Text(
+                                  !hasBalance && isConnected
+                                      ? "NOT ENOUGH PIECES"
+                                      : (isConnected
+                                            ? "SEND TO CUTTER"
+                                            : "CONNECT TO CUTTER"),
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }

@@ -2,6 +2,7 @@ class Category {
   final int id;
   final String name;
   final String image;
+  final String imageUrl;
 
   final List<Category> children;
 
@@ -9,6 +10,7 @@ class Category {
     required this.id,
     required this.name,
     required this.image,
+    required this.imageUrl,
     this.children = const [],
   });
 
@@ -27,6 +29,7 @@ class Category {
           json['name_ar'] ??
           '', // Fallback to localized name if needed logic
       image: json['image'] ?? '',
+      imageUrl: json['image_url'] ?? '',
       children: childrenList,
     );
   }

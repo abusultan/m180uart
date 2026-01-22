@@ -51,9 +51,11 @@ class _ProductListScreenState extends State<ProductListScreen> {
   void _onSearchChanged(String query) {
     if (_debounce?.isActive ?? false) _debounce!.cancel();
     _debounce = Timer(const Duration(milliseconds: 500), () {
-      _products.clear();
-      _page = 1;
-      _hasMore = true;
+      setState(() {
+        _products.clear();
+        _page = 1;
+        _hasMore = true;
+      });
       _loadProducts();
     });
   }
@@ -77,11 +79,20 @@ class _ProductListScreenState extends State<ProductListScreen> {
 
     try {
       final query = _searchController.text.trim();
-      final newProducts = await ApiService().getCategoryProducts(
-        widget.category.id,
-        _page,
-        query: query.isNotEmpty ? query : null,
-      );
+      List<Product> newProducts;
+
+      if (query.isNotEmpty) {
+        // Use Global Search Endpoint (Backend Search)
+        // Note: The user requested "http://.../api/products?search=..."
+        newProducts = await ApiService().searchProducts(query, page: _page);
+      } else {
+        // Use Category Endpoint (Default view)
+        newProducts = await ApiService().getCategoryProducts(
+          widget.category.id,
+          _page,
+        );
+      }
+
       if (newProducts.isEmpty) {
         _hasMore = false;
       } else {
@@ -154,11 +165,28 @@ class _ProductListScreenState extends State<ProductListScreen> {
                       width: 60,
                       height: 60,
                       decoration: BoxDecoration(
-                        color: Colors.black26,
+                        color: Colors.white,
                         borderRadius: BorderRadius.circular(8),
                       ),
-                      child: const Icon(Icons.image, color: Colors.grey),
-                      // In real app: Image.network(product.image)
+                      padding: const EdgeInsets.all(4),
+                      child: Image.network(
+                        product.image.isNotEmpty
+                            ? product.image
+                            : widget.category.imageUrl,
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) {
+                          if (product.image.isNotEmpty &&
+                              widget.category.imageUrl.isNotEmpty) {
+                            return Image.network(
+                              widget.category.imageUrl,
+                              fit: BoxFit.contain,
+                              errorBuilder: (context, error, stackTrace) =>
+                                  const Icon(Icons.image, color: Colors.grey),
+                            );
+                          }
+                          return const Icon(Icons.image, color: Colors.grey);
+                        },
+                      ),
                     ),
                     title: Text(
                       product.nameEn.isNotEmpty

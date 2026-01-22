@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../services/api_service.dart';
-import 'dashboard_screen.dart';
+import '../../core/app_strings.dart';
+import 'register_screen.dart';
+import 'main_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -56,9 +58,9 @@ class _LoginScreenState extends State<LoginScreen> {
         await prefs.setString('login_pass', pass);
 
         if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const DashboardScreen()),
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const MainScreen()),
+          (Route<dynamic> route) => false,
         );
       } else {
         setState(() => _error = response.message);
@@ -81,12 +83,10 @@ class _LoginScreenState extends State<LoginScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Icon(Icons.cut, size: 80, color: Color(0xFF00FF88)),
-              const SizedBox(height: 24),
-              const Text(
-                "YousefCutter",
+              Text(
+                AppStrings.of(context, 'app_name'),
                 textAlign: TextAlign.center,
-                style: TextStyle(
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 32,
                   fontWeight: FontWeight.bold,
@@ -98,7 +98,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 controller: _loginController,
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
-                  labelText: "Username / Phone",
+                  labelText: AppStrings.of(context, 'email'),
                   labelStyle: const TextStyle(color: Colors.grey),
                   filled: true,
                   fillColor: const Color(0xFF1E1E1E),
@@ -119,7 +119,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 obscureText: true,
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
-                  labelText: "Password",
+                  labelText: AppStrings.of(context, 'password'),
                   labelStyle: const TextStyle(color: Colors.grey),
                   filled: true,
                   fillColor: const Color(0xFF1E1E1E),
@@ -155,10 +155,25 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   child: _isLoading
                       ? const CircularProgressIndicator(color: Colors.black)
-                      : const Text(
-                          "LOGIN",
-                          style: TextStyle(fontWeight: FontWeight.bold),
+                      : Text(
+                          AppStrings.of(context, 'login_button'),
+                          style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const RegisterScreen(),
+                    ),
+                  );
+                },
+                child: Text(
+                  AppStrings.of(context, 'create_account'),
+                  style: const TextStyle(color: Color(0xFF00FF88)),
                 ),
               ),
             ],

@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../data/models/auth_response.dart';
 import '../data/models/product_models.dart';
 
@@ -49,6 +50,25 @@ class ApiService {
     _token = token;
   }
 
+  Future<void> saveToken(String token) async {
+    _token = token;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('auth_token', token);
+  }
+
+  Future<String?> loadToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    _token = prefs.getString('auth_token');
+    return _token;
+  }
+
+  Future<void> clearToken() async {
+    _token = null;
+    _currentUser = null;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('auth_token');
+  }
+
   // --- Auth ---
 
   Future<LoginResponse> login(String login, String password) async {
@@ -61,12 +81,51 @@ class ApiService {
 
       final loginResponse = LoginResponse.fromJson(response.data);
       if (loginResponse.success && loginResponse.token.isNotEmpty) {
-        _token = loginResponse.token;
+        await saveToken(loginResponse.token);
         _currentUser = loginResponse.user;
       }
       return loginResponse;
     } catch (e) {
       throw Exception("Login failed: $e");
+    }
+  }
+
+  Future<LoginResponse> register(
+    String name,
+    String email,
+    String phone,
+    String address,
+    String password,
+    String passwordConfirmation,
+  ) async {
+    try {
+      final response = await _dio.post(
+        'register',
+        data: FormData.fromMap({
+          'name': name,
+          'email': email,
+          'phone': phone,
+          'address': address,
+          'password': password,
+          'password_confirmation': passwordConfirmation,
+        }),
+      );
+
+      final loginResponse = LoginResponse.fromJson(response.data);
+      if (loginResponse.success && loginResponse.token.isNotEmpty) {
+        await saveToken(loginResponse.token);
+        _currentUser = loginResponse.user;
+      }
+      return loginResponse;
+    } catch (e) {
+      // Improve error handling for registration
+      if (e is DioException && e.response != null) {
+        // You might want to parse validation errors here
+        throw Exception(
+          "Registration failed: ${e.response?.data['message'] ?? e.message}",
+        );
+      }
+      throw Exception("Registration failed: $e");
     }
   }
 
@@ -138,6 +197,35 @@ class ApiService {
     }
   }
 
+  Future<List<Product>> searchProducts(String query, {int page = 1}) async {
+    try {
+      final response = await _dio.get(
+        'products',
+        queryParameters: {'search': query, 'page': page},
+      );
+
+      print("Search Products Response: ${response.data}");
+      if (response.data['success'] == true) {
+        final rawData = response.data['data'];
+
+        final List list;
+        if (rawData is Map && rawData.containsKey('data')) {
+          list = rawData['data'];
+        } else if (rawData is List) {
+          list = rawData;
+        } else {
+          list = [];
+        }
+
+        return list.map((e) => Product.fromJson(e)).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Search Products Error: $e');
+      return [];
+    }
+  }
+
   Future<List<ProductItem>> getProductItems(int productId) async {
     try {
       final response = await _dio.get('products/$productId/items');
@@ -177,9 +265,41 @@ class ApiService {
         options: Options(contentType: Headers.formUrlEncodedContentType),
       );
 
-      return response.data['success'] == true;
+      final success = response.data['success'] == true;
+      if (success) {
+        // Update local user remaining pieces if available in response,
+        // otherwise just decrement locally.
+        // Assuming the API might return the new user object or just success.
+        // If not provided, we manually decrement.
+        if (_currentUser != null) {
+          // It's safer to fetch fresh user info, but for speed we decrement
+          int newCount = _currentUser!.remainingPieces - 1;
+          if (newCount < 0) newCount = 0;
+
+          _currentUser = User(
+            id: _currentUser!.id,
+            name: _currentUser!.name,
+            email: _currentUser!.email,
+            phone: _currentUser!.phone,
+            address: _currentUser!.address,
+            remainingPieces: newCount,
+          );
+        }
+      } else {
+        // Check for specific message
+        final message = response.data['message'];
+        if (message == "Not enough pieces") {
+          throw Exception(message);
+        }
+      }
+
+      return success;
     } catch (e) {
       print('Record Use Error: $e');
+      // Re-throw if it's our specific exception
+      if (e.toString().contains("Not enough pieces")) {
+        rethrow;
+      }
       return false;
     }
   }

@@ -46,6 +46,16 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Future<void> _startScan() async {
+    if (CutterBluetoothService().isConnected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Please disconnect from the current device to scan."),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _isScanning = true;
       _scanResults = [];
@@ -117,7 +127,7 @@ class _ScanScreenState extends State<ScanScreen> {
       _showLoadingDialog("Authenticating...");
 
       // 2. Handshake
-      // Create a completer to await the callback result
+      // Create a completer to await the callback result // verify
       final Completer<bool> handshakeCompleter = Completer<bool>();
 
       final handshake = MachineHandshake(
@@ -164,6 +174,9 @@ class _ScanScreenState extends State<ScanScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Connected & Authenticated!")),
         );
+        // FORCE UI REFRESH
+        if (mounted) setState(() {});
+
         // Return success to the caller (DeviceDetailScreen)
         Navigator.of(context).pop(true);
       } else {
@@ -215,6 +228,8 @@ class _ScanScreenState extends State<ScanScreen> {
 
   @override
   Widget build(BuildContext context) {
+    bool isConnected = CutterBluetoothService().isConnected;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text(
@@ -243,31 +258,38 @@ class _ScanScreenState extends State<ScanScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      _isScanning
+                      isConnected
+                          ? "Disconnect to scan"
+                          : _isScanning
                           ? "Scanning..."
                           : "Found ${_scanResults.length} devices",
                       style: TextStyle(color: Colors.grey[400]),
                     ),
-                    if (!_isScanning)
-                      IconButton(
-                        icon: const Icon(
-                          Icons.refresh,
-                          color: Color(0xFF00FF88),
+                    if (!isConnected)
+                      if (!_isScanning)
+                        IconButton(
+                          icon: const Icon(
+                            Icons.refresh,
+                            color: Color(0xFF00FF88),
+                          ),
+                          onPressed: _startScan,
+                        )
+                      else
+                        const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Color(0xFF00FF88),
+                          ),
                         ),
-                        onPressed: _startScan,
-                      )
-                    else
-                      const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Color(0xFF00FF88),
-                        ),
-                      ),
                   ],
                 ),
               ),
+
+              if (CutterBluetoothService().isConnected &&
+                  CutterBluetoothService().connectedDevice != null)
+                _buildConnectedDeviceCard(),
 
               Expanded(
                 child: ListView.builder(
@@ -277,7 +299,6 @@ class _ScanScreenState extends State<ScanScreen> {
                     final name = device.platformName.isNotEmpty
                         ? device.platformName
                         : "Unknown Device";
-                    final rssi = _scanResults[index].rssi;
 
                     return Container(
                       margin: const EdgeInsets.symmetric(
@@ -319,26 +340,6 @@ class _ScanScreenState extends State<ScanScreen> {
                             ),
                           ],
                         ),
-                        trailing: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF00FF88).withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: const Color(0xFF00FF88).withOpacity(0.5),
-                            ),
-                          ),
-                          child: Text(
-                            "${rssi}dBm",
-                            style: const TextStyle(
-                              color: Color(0xFF00FF88),
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
                       ),
                     );
                   },
@@ -347,6 +348,68 @@ class _ScanScreenState extends State<ScanScreen> {
             ],
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildConnectedDeviceCard() {
+    final device = CutterBluetoothService().connectedDevice!;
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF00FF88),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF00FF88).withOpacity(0.3),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 20,
+          vertical: 12,
+        ),
+        leading: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.1),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(
+            Icons.bluetooth_connected,
+            color: Colors.black,
+            size: 28,
+          ),
+        ),
+        title: const Text(
+          "Connected",
+          style: TextStyle(
+            color: Colors.black,
+            fontWeight: FontWeight.bold,
+            fontSize: 14,
+          ),
+        ),
+        subtitle: Text(
+          device.platformName.isNotEmpty
+              ? device.platformName
+              : "Unknown Device",
+          style: const TextStyle(
+            color: Colors.black87,
+            fontWeight: FontWeight.w600,
+            fontSize: 18,
+          ),
+        ),
+        trailing: IconButton(
+          icon: const Icon(Icons.logout, color: Colors.black87),
+          tooltip: "Disconnect",
+          onPressed: () async {
+            await CutterBluetoothService().disconnect();
+            if (mounted) setState(() {});
+          },
+        ),
       ),
     );
   }
