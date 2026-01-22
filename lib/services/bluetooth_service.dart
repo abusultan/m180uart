@@ -190,8 +190,13 @@ class CutterBluetoothService {
 
       // Then Enable
       print("Enabling notifications on ${_notifyCharacteristic!.uuid}...");
-      await _notifyCharacteristic!.setNotifyValue(true);
-      print("Notifications enabled.");
+      try {
+        await _notifyCharacteristic!.setNotifyValue(true);
+        print("Notifications enabled.");
+      } catch (e) {
+        print("Warning: Failed to enable notifications (likely Code 10): $e");
+        // Proceed anyway, as some devices work without explicit enable or throw false errors
+      }
     }
   }
 
