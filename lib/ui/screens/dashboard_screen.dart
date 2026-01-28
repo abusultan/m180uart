@@ -246,9 +246,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
               physics: const AlwaysScrollableScrollPhysics(),
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 2,
-                crossAxisSpacing: 16,
-                mainAxisSpacing: 16,
-                childAspectRatio: 0.8,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+                childAspectRatio: 1.0, // More square-like, compact
               ),
               itemCount: categories.length,
               itemBuilder: (context, index) {
@@ -259,63 +259,85 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     decoration: BoxDecoration(
                       color: const Color(0xFF1E1E1E),
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: const Color(0xFF333333)),
+                      // Subtle gradient for premium feel
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          const Color(0xFF252525),
+                          const Color(0xFF1A1A1A),
+                        ],
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.3),
+                          blurRadius: 8,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                      border: Border.all(color: Colors.white.withOpacity(0.05)),
                     ),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        // Category Image or Icon
+                        // Category Image or Icon - Smaller & Neater
                         if (cat.imageUrl.isNotEmpty)
-                          Expanded(
-                            child: Padding(
-                              padding: const EdgeInsets.all(12.0),
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(12),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.2),
-                                      blurRadius: 4,
-                                      offset: const Offset(0, 2),
-                                    ),
-                                  ],
+                          Container(
+                            height: 70, // Fixed reduced height
+                            width: 70,
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(16),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.1),
+                                  blurRadius: 4,
+                                  offset: const Offset(0, 2),
                                 ),
-                                padding: const EdgeInsets.all(2.0),
-                                child: Center(
-                                  child: Image.network(
-                                    cat.imageUrl,
-                                    fit: BoxFit.contain,
-                                    errorBuilder: (context, error, stackTrace) {
-                                      return Icon(
-                                        cat.children.isNotEmpty
-                                            ? Icons.folder_open
-                                            : Icons.smartphone,
-                                        size: 40,
-                                        color: Colors.grey,
-                                      );
-                                    },
-                                  ),
-                                ),
-                              ),
+                              ],
+                            ),
+                            child: Image.network(
+                              cat.imageUrl,
+                              fit: BoxFit.contain,
+                              errorBuilder: (context, error, stackTrace) {
+                                return Icon(
+                                  cat.children.isNotEmpty
+                                      ? Icons.folder_open
+                                      : Icons.smartphone,
+                                  size: 30,
+                                  color: Colors.grey,
+                                );
+                              },
                             ),
                           )
                         else
-                          Icon(
-                            cat.children.isNotEmpty
-                                ? Icons.folder_open
-                                : Icons.smartphone,
-                            size: 50,
-                            color: const Color(0xFF00FF88),
+                          Container(
+                            height: 70,
+                            width: 70,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF00FF88).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+
+                            child: Icon(
+                              cat.children.isNotEmpty
+                                  ? Icons.folder_open
+                                  : Icons.smartphone,
+                              size: 32,
+                              color: const Color(0xFF00FF88),
+                            ),
                           ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 12),
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                          padding: const EdgeInsets.symmetric(horizontal: 12.0),
                           child: Text(
                             cat.name,
                             style: const TextStyle(
                               color: Colors.white,
-                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              height: 1.2,
                             ),
                             textAlign: TextAlign.center,
                             maxLines: 2,

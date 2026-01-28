@@ -1,14 +1,23 @@
 class Category {
   final int id;
-  final String name;
+  final String nameAr;
+  final String nameEn;
   final String image;
   final String imageUrl;
 
   final List<Category> children;
 
+  String get name {
+    if (nameEn.isNotEmpty && nameAr.isNotEmpty) {
+      return "$nameEn / $nameAr";
+    }
+    return nameEn.isNotEmpty ? nameEn : nameAr;
+  }
+
   Category({
     required this.id,
-    required this.name,
+    required this.nameAr,
+    required this.nameEn,
     required this.image,
     required this.imageUrl,
     this.children = const [],
@@ -24,10 +33,8 @@ class Category {
 
     return Category(
       id: json['id'] ?? 0,
-      name:
-          json['name_en'] ??
-          json['name_ar'] ??
-          '', // Fallback to localized name if needed logic
+      nameAr: json['name_ar'] ?? '',
+      nameEn: json['name_en'] ?? '',
       image: json['image'] ?? '',
       imageUrl: json['image_url'] ?? '',
       children: childrenList,

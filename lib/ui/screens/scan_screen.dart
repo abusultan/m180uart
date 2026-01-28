@@ -6,6 +6,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../../services/bluetooth_service.dart';
 import '../../core/machine_handshake.dart';
 import 'handshake_tester_screen.dart';
+import '../../core/app_strings.dart';
 
 class ScanScreen extends StatefulWidget {
   const ScanScreen({super.key});
@@ -38,9 +39,7 @@ class _ScanScreenState extends State<ScanScreen> {
     } else {
       // Handle denied
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Permissions required for Bluetooth scanning"),
-        ),
+        SnackBar(content: Text(AppStrings.of(context, 'permissions_required'))),
       );
     }
   }
@@ -48,8 +47,8 @@ class _ScanScreenState extends State<ScanScreen> {
   Future<void> _startScan() async {
     if (CutterBluetoothService().isConnected) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Please disconnect from the current device to scan."),
+        SnackBar(
+          content: Text(AppStrings.of(context, 'disconnect_to_scan')),
           backgroundColor: Colors.orange,
         ),
       );
@@ -107,9 +106,11 @@ class _ScanScreenState extends State<ScanScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('فشل الاتصال: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${AppStrings.of(context, 'connection_error')}: $e'),
+        ),
+      );
     }
   }
 
@@ -117,14 +118,14 @@ class _ScanScreenState extends State<ScanScreen> {
     // Stop scanning first
     await FlutterBluePlus.stopScan();
 
-    _showLoadingDialog("Connecting...");
+    _showLoadingDialog(AppStrings.of(context, 'connecting'));
 
     try {
       // 1. Connect
       await CutterBluetoothService().connect(device);
 
       Navigator.pop(context); // Pop connecting dialog
-      _showLoadingDialog("Authenticating...");
+      _showLoadingDialog(AppStrings.of(context, 'authenticating'));
 
       // 2. Handshake
       // Create a completer to await the callback result // verify
@@ -172,7 +173,9 @@ class _ScanScreenState extends State<ScanScreen> {
         }
 
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Connected & Authenticated!")),
+          SnackBar(
+            content: Text(AppStrings.of(context, 'connected_authenticated')),
+          ),
         );
         // FORCE UI REFRESH
         if (mounted) setState(() {});
@@ -181,8 +184,8 @@ class _ScanScreenState extends State<ScanScreen> {
         Navigator.of(context).pop(true);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Authentication Failed"),
+          SnackBar(
+            content: Text(AppStrings.of(context, 'auth_failed')),
             backgroundColor: Colors.red,
           ),
         );
@@ -197,7 +200,7 @@ class _ScanScreenState extends State<ScanScreen> {
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("Connection Error: $e"),
+          content: Text("${AppStrings.of(context, 'connection_error')}: $e"),
           backgroundColor: Colors.red,
         ),
       );
@@ -232,9 +235,9 @@ class _ScanScreenState extends State<ScanScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          "Select Machine",
-          style: TextStyle(fontWeight: FontWeight.bold),
+        title: Text(
+          AppStrings.of(context, 'select_machine'),
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         centerTitle: true,
         backgroundColor: Colors.transparent,
@@ -259,10 +262,10 @@ class _ScanScreenState extends State<ScanScreen> {
                   children: [
                     Text(
                       isConnected
-                          ? "Disconnect to scan"
+                          ? AppStrings.of(context, 'msg_disconnect_to_scan')
                           : _isScanning
-                          ? "Scanning..."
-                          : "Found ${_scanResults.length} devices",
+                          ? AppStrings.of(context, 'scanning')
+                          : "${AppStrings.of(context, 'found_devices')} (${_scanResults.length})",
                       style: TextStyle(color: Colors.grey[400]),
                     ),
                     if (!isConnected)
@@ -298,7 +301,7 @@ class _ScanScreenState extends State<ScanScreen> {
                     final device = _scanResults[index].device;
                     final name = device.platformName.isNotEmpty
                         ? device.platformName
-                        : "Unknown Device";
+                        : AppStrings.of(context, 'unknown_device');
 
                     return Container(
                       margin: const EdgeInsets.symmetric(
@@ -332,7 +335,7 @@ class _ScanScreenState extends State<ScanScreen> {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              'اضغط مطولاً لاختبار Handshake',
+                              AppStrings.of(context, 'hold_to_test_handshake'),
                               style: TextStyle(
                                 color: const Color(0xFF00FF88).withOpacity(0.7),
                                 fontSize: 10,
@@ -384,9 +387,9 @@ class _ScanScreenState extends State<ScanScreen> {
             size: 28,
           ),
         ),
-        title: const Text(
-          "Connected",
-          style: TextStyle(
+        title: Text(
+          AppStrings.of(context, 'status_connected'),
+          style: const TextStyle(
             color: Colors.black,
             fontWeight: FontWeight.bold,
             fontSize: 14,
@@ -395,7 +398,7 @@ class _ScanScreenState extends State<ScanScreen> {
         subtitle: Text(
           device.platformName.isNotEmpty
               ? device.platformName
-              : "Unknown Device",
+              : AppStrings.of(context, 'unknown_device'),
           style: const TextStyle(
             color: Colors.black87,
             fontWeight: FontWeight.w600,
@@ -431,8 +434,8 @@ class _ScanScreenState extends State<ScanScreen> {
             const SizedBox(height: 24),
             Text(
               state == BluetoothAdapterState.unauthorized
-                  ? "Bluetooth Permissions Required"
-                  : "Bluetooth is Off",
+                  ? AppStrings.of(context, 'bluetooth_perms_required')
+                  : AppStrings.of(context, 'bluetooth_is_off'),
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 20,
@@ -442,8 +445,8 @@ class _ScanScreenState extends State<ScanScreen> {
             const SizedBox(height: 12),
             Text(
               state == BluetoothAdapterState.unauthorized
-                  ? "Please grant Bluetooth permissions in settings to scan for machines."
-                  : "Please turn on Bluetooth to scan for available cutting machines.",
+                  ? AppStrings.of(context, 'grant_bluetooth_permission')
+                  : AppStrings.of(context, 'turn_on_bluetooth_msg'),
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey[400], fontSize: 14),
             ),
@@ -452,7 +455,7 @@ class _ScanScreenState extends State<ScanScreen> {
               ElevatedButton.icon(
                 onPressed: () => CutterBluetoothService().turnOnBluetooth(),
                 icon: const Icon(Icons.bluetooth),
-                label: const Text("Turn On Bluetooth"),
+                label: Text(AppStrings.of(context, 'turn_on_bluetooth_btn')),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF00FF88),
                   foregroundColor: Colors.black,

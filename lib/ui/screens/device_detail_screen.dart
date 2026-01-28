@@ -7,6 +7,7 @@ import '../../data/models/product_models.dart';
 import '../../core/machine_handshake.dart';
 import 'scan_screen.dart';
 import '../../utils/digit_mapper.dart';
+import '../../core/app_strings.dart';
 
 class DeviceDetailScreen extends StatefulWidget {
   final ProductItem? productItem;
@@ -58,7 +59,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
 
     setState(() {
       _isDownloading = true;
-      _status = "Downloading file...";
+      _status = AppStrings.of(context, 'status_downloading');
     });
 
     // Logic: Try PLT for DQ machines, SJC for others.
@@ -79,7 +80,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     if (url.isEmpty) {
       setState(() {
         _isDownloading = false;
-        _status = "No file available";
+        _status = AppStrings.of(context, 'status_no_file');
       });
       return;
     }
@@ -89,13 +90,13 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       _cutFile = file;
       setState(() {
         _isDownloading = false;
-        _status = "File Ready";
+        _status = AppStrings.of(context, 'status_file_ready');
       });
       _startCut();
     } else {
       setState(() {
         _isDownloading = false;
-        _status = "Download Failed";
+        _status = AppStrings.of(context, 'status_download_failed');
       });
     }
   }
@@ -106,8 +107,8 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     if (remaining <= 0) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Error: Not enough pieces left to cut."),
+        SnackBar(
+          content: Text(AppStrings.of(context, 'error_not_enough_pieces')),
           backgroundColor: Colors.red,
         ),
       );
@@ -124,7 +125,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
 
     setState(() {
       _isCutting = true;
-      _status = "Verifying Balance...";
+      _status = AppStrings.of(context, 'status_verifying_balance');
     });
 
     try {
@@ -136,28 +137,30 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         setState(() {}); // Refresh UI for new balance
       }
 
-      setState(() => _status = "Synchronizing Handshake...");
+      setState(() => _status = AppStrings.of(context, 'status_sync_handshake'));
 
       // 0. Perform Handshake Sync (Targeted re-handshake)
       // This ensures we have a valid challenge/password session before starting.
       bool handshakeSuccess = await _performHandshakeSync();
       if (!handshakeSuccess) {
-        throw Exception("Handshake synchronization failed.");
+        throw Exception(AppStrings.of(context, 'error_handshake_failed'));
       }
       if (!mounted) return;
 
-      setState(() => _status = "Initializing Cut...");
+      setState(() => _status = AppStrings.of(context, 'status_init_cut'));
       // 1. Clear Buffer
       // Use ;;; instead of ;RCBM; to avoid resetting the machine/auth state.
       // This ensures we stay authenticated for consecutive cuts.
       await _bluetooth.write(";;;");
       if (!mounted) return;
-      setState(() => _status = "Clearing Buffer...");
+      setState(
+        () => _status = AppStrings.of(context, 'status_clearing_buffer'),
+      );
       await Future.delayed(const Duration(milliseconds: 500));
       if (!mounted) return;
 
       // 2. Home
-      setState(() => _status = "Homing...");
+      setState(() => _status = AppStrings.of(context, 'status_homing'));
       await _bluetooth.write("BD:110,3;");
       await Future.delayed(const Duration(milliseconds: 2000));
       if (!mounted) return;
@@ -170,7 +173,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       if (!mounted) return;
 
       // 4. Send File Data
-      setState(() => _status = "Sending Data...");
+      setState(() => _status = AppStrings.of(context, 'status_sending_data'));
 
       // Determine machine type from serial
       String? serial = _bluetooth.serialNumber;
@@ -211,17 +214,17 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       await Future.delayed(const Duration(milliseconds: 1000));
       if (!mounted) return;
 
-      setState(() => _status = "Starting Cut...");
+      setState(() => _status = AppStrings.of(context, 'status_starting_cut'));
       await _bluetooth.write("BD:100,13;");
 
       setState(() {
-        _status = "Cut Started!";
+        _status = AppStrings.of(context, 'status_cut_started');
         _isCutting = false;
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Cut Started Successfully!"),
+        SnackBar(
+          content: Text(AppStrings.of(context, 'msg_cut_success')),
           backgroundColor: Color(0xFF00FF88),
         ),
       );
@@ -252,16 +255,14 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   Widget build(BuildContext context) {
     bool isConnected = _bluetooth.isConnected;
     String name =
-        widget.productItem?.nameEn ??
-        widget.productItem?.nameAr ??
-        "Unknown Product";
+        widget.productItem?.nameEn ?? AppStrings.of(context, 'unknown_product');
 
     int remaining = ApiService().currentUser?.remainingPieces ?? 0;
     bool hasBalance = remaining > 0;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Cutter Control"),
+        title: Text(AppStrings.of(context, 'cutter_control_title')),
         backgroundColor: Colors.transparent,
       ),
       backgroundColor: const Color(0xFF121212),
@@ -424,7 +425,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                         Padding(
                           padding: const EdgeInsets.only(bottom: 16.0),
                           child: Text(
-                            "Remaining: $remaining",
+                            "${AppStrings.of(context, 'remaining')}: $remaining",
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               color: hasBalance
@@ -476,10 +477,19 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                                 )
                               : Text(
                                   !hasBalance && isConnected
-                                      ? "NOT ENOUGH PIECES"
+                                      ? AppStrings.of(
+                                          context,
+                                          'not_enough_pieces',
+                                        )
                                       : (isConnected
-                                            ? "SEND TO CUTTER"
-                                            : "CONNECT TO CUTTER"),
+                                            ? AppStrings.of(
+                                                context,
+                                                'send_to_cutter',
+                                              )
+                                            : AppStrings.of(
+                                                context,
+                                                'connect_to_cutter',
+                                              )),
                                   style: const TextStyle(
                                     fontSize: 18,
                                     fontWeight: FontWeight.bold,
