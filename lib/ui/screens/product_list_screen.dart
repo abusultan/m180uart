@@ -21,7 +21,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
   final ScrollController _scrollController = ScrollController();
 
   // Search
-  bool _isSearching = false;
+
   final TextEditingController _searchController = TextEditingController();
   Timer? _debounce;
 
@@ -60,19 +60,6 @@ class _ProductListScreenState extends State<ProductListScreen> {
     });
   }
 
-  void _toggleSearch() {
-    setState(() {
-      _isSearching = !_isSearching;
-      if (!_isSearching) {
-        _searchController.clear();
-        _products.clear();
-        _page = 1;
-        _hasMore = true;
-        _loadProducts();
-      }
-    });
-  }
-
   Future<void> _loadProducts() async {
     if (_isLoading) return;
     setState(() => _isLoading = true);
@@ -84,7 +71,11 @@ class _ProductListScreenState extends State<ProductListScreen> {
       if (query.isNotEmpty) {
         // Use Global Search Endpoint (Backend Search)
         // Note: The user requested "http://.../api/products?search=..."
-        newProducts = await ApiService().searchProducts(query, page: _page);
+        newProducts = await ApiService().searchProducts(
+          query,
+          page: _page,
+          categoryId: widget.category.id,
+        );
       } else {
         // Use Category Endpoint (Default view)
         newProducts = await ApiService().getCategoryProducts(
@@ -110,111 +101,126 @@ class _ProductListScreenState extends State<ProductListScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: _isSearching
-            ? TextField(
-                controller: _searchController,
-                autofocus: true,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                  hintText: "Search products...",
-                  hintStyle: TextStyle(color: Colors.grey),
-                  border: InputBorder.none,
-                ),
-                onChanged: _onSearchChanged,
-              )
-            : Text(widget.category.name),
+        title: Text(widget.category.name),
         backgroundColor: Colors.transparent,
-        actions: [
-          IconButton(
-            icon: Icon(_isSearching ? Icons.close : Icons.search),
-            onPressed: _toggleSearch,
-          ),
-        ],
       ),
       backgroundColor: const Color(0xFF121212),
-      body: _products.isEmpty && _isLoading
-          ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFF00FF88)),
-            )
-          : ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.all(16),
-              itemCount: _products.length + (_hasMore ? 1 : 0),
-              itemBuilder: (context, index) {
-                if (index == _products.length) {
-                  return const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(16.0),
-                      child: CircularProgressIndicator(
-                        color: Color(0xFF00FF88),
-                      ),
-                    ),
-                  );
-                }
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: TextField(
+              controller: _searchController,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                hintText: "Search ${widget.category.name}...",
+                hintStyle: const TextStyle(color: Colors.grey),
+                prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                filled: true,
+                fillColor: const Color(0xFF1E1E1E),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+              ),
+              onChanged: _onSearchChanged,
+            ),
+          ),
+          Expanded(
+            child: _products.isEmpty && _isLoading
+                ? const Center(
+                    child: CircularProgressIndicator(color: Color(0xFF00FF88)),
+                  )
+                : ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    itemCount: _products.length + (_hasMore ? 1 : 0),
+                    itemBuilder: (context, index) {
+                      if (index == _products.length) {
+                        return const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(16.0),
+                            child: CircularProgressIndicator(
+                              color: Color(0xFF00FF88),
+                            ),
+                          ),
+                        );
+                      }
 
-                final product = _products[index];
-                return Card(
-                  color: const Color(0xFF1E1E1E),
-                  margin: const EdgeInsets.only(bottom: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.all(12),
-                    leading: Container(
-                      width: 60,
-                      height: 60,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      padding: const EdgeInsets.all(4),
-                      child: Image.network(
-                        product.image.isNotEmpty
-                            ? product.image
-                            : widget.category.imageUrl,
-                        fit: BoxFit.contain,
-                        errorBuilder: (context, error, stackTrace) {
-                          if (product.image.isNotEmpty &&
-                              widget.category.imageUrl.isNotEmpty) {
-                            return Image.network(
-                              widget.category.imageUrl,
+                      final product = _products[index];
+                      return Card(
+                        color: const Color(0xFF1E1E1E),
+                        margin: const EdgeInsets.only(bottom: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.all(12),
+                          leading: Container(
+                            width: 60,
+                            height: 60,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            padding: const EdgeInsets.all(4),
+                            child: Image.network(
+                              product.image.isNotEmpty
+                                  ? product.image
+                                  : widget.category.imageUrl,
                               fit: BoxFit.contain,
-                              errorBuilder: (context, error, stackTrace) =>
-                                  const Icon(Icons.image, color: Colors.grey),
+                              errorBuilder: (context, error, stackTrace) {
+                                if (product.image.isNotEmpty &&
+                                    widget.category.imageUrl.isNotEmpty) {
+                                  return Image.network(
+                                    widget.category.imageUrl,
+                                    fit: BoxFit.contain,
+                                    errorBuilder:
+                                        (context, error, stackTrace) =>
+                                            const Icon(
+                                              Icons.image,
+                                              color: Colors.grey,
+                                            ),
+                                  );
+                                }
+                                return const Icon(
+                                  Icons.image,
+                                  color: Colors.grey,
+                                );
+                              },
+                            ),
+                          ),
+                          title: Text(
+                            product.nameEn.isNotEmpty
+                                ? product.nameEn
+                                : product.nameAr,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          trailing: const Icon(
+                            Icons.arrow_forward_ios,
+                            color: Colors.grey,
+                            size: 16,
+                          ),
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    ProductItemsScreen(product: product),
+                              ),
                             );
-                          }
-                          return const Icon(Icons.image, color: Colors.grey);
-                        },
-                      ),
-                    ),
-                    title: Text(
-                      product.nameEn.isNotEmpty
-                          ? product.nameEn
-                          : product.nameAr,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    trailing: const Icon(
-                      Icons.arrow_forward_ios,
-                      color: Colors.grey,
-                      size: 16,
-                    ),
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) =>
-                              ProductItemsScreen(product: product),
+                          },
                         ),
                       );
                     },
                   ),
-                );
-              },
-            ),
+          ),
+        ],
+      ),
     );
   }
 }

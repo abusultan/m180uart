@@ -15,7 +15,8 @@ class ApiService {
   ApiService._internal() {
     _dio = Dio(
       BaseOptions(
-        baseUrl: 'https://cutter-back.mobilemartjo.com/api/',
+        baseUrl: 'https://cutter.irbidbasket.com/api/',
+        // baseUrl: 'http://192.168.1.89:8000/api/',
         connectTimeout: const Duration(seconds: 30),
         receiveTimeout: const Duration(seconds: 30),
         headers: {'Accept': 'application/json'},
@@ -197,12 +198,18 @@ class ApiService {
     }
   }
 
-  Future<List<Product>> searchProducts(String query, {int page = 1}) async {
+  Future<List<Product>> searchProducts(
+    String query, {
+    int page = 1,
+    int? categoryId,
+  }) async {
     try {
-      final response = await _dio.get(
-        'products',
-        queryParameters: {'search': query, 'page': page},
-      );
+      final Map<String, dynamic> params = {'search': query, 'page': page};
+      if (categoryId != null) {
+        params['category_id'] = categoryId;
+      }
+
+      final response = await _dio.get('products', queryParameters: params);
 
       print("Search Products Response: ${response.data}");
       if (response.data['success'] == true) {

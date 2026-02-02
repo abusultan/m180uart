@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:async';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter/material.dart';
 import '../../services/api_service.dart';
 import '../../services/bluetooth_service.dart';
@@ -285,23 +286,39 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                             aspectRatio: 1.4,
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(16),
-                              child: Container(
-                                width: double.infinity,
-                                color: Colors.white.withOpacity(0.05),
-                                child: Image.network(
-                                  widget.productItem!.imageUrl,
-                                  fit: BoxFit.cover,
-                                  width: double.infinity,
-                                  height: double.infinity,
-                                  errorBuilder: (c, e, s) => const Center(
-                                    child: Icon(
-                                      Icons.broken_image,
-                                      color: Colors.grey,
-                                      size: 50,
+                              child:
+                                  widget.productItem!.imageUrl
+                                      .toLowerCase()
+                                      .endsWith('.svg')
+                                  ? SvgPicture.network(
+                                      widget.productItem!.imageUrl,
+                                      fit: BoxFit.contain,
+                                      width: double.infinity,
+                                      height: double.infinity,
+                                      colorFilter: const ColorFilter.mode(
+                                        Colors.white,
+                                        BlendMode.srcIn,
+                                      ),
+                                      placeholderBuilder: (context) =>
+                                          const Center(
+                                            child: CircularProgressIndicator(
+                                              color: Color(0xFF00FF88),
+                                            ),
+                                          ),
+                                    )
+                                  : Image.network(
+                                      widget.productItem!.imageUrl,
+                                      fit: BoxFit.contain,
+                                      width: double.infinity,
+                                      height: double.infinity,
+                                      errorBuilder: (c, e, s) => const Center(
+                                        child: Icon(
+                                          Icons.broken_image,
+                                          color: Colors.grey,
+                                          size: 50,
+                                        ),
+                                      ),
                                     ),
-                                  ),
-                                ),
-                              ),
                             ),
                           ),
                         ),

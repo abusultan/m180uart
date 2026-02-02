@@ -25,6 +25,7 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   late Future<List<Category>> _categoriesFuture;
+  String _searchQuery = '';
 
   @override
   void initState() {
@@ -180,178 +181,246 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ],
       ),
       backgroundColor: const Color(0xFF121212),
-      body: RefreshIndicator(
-        color: const Color(0xFF00FF88),
-        onRefresh: () async {
-          // Update User Info
-          await ApiService().getUserInfo().then((_) {
-            if (mounted) setState(() {});
-          });
-
-          setState(() {
-            if (widget.currentCategoryId != null) {
-              // Sub-category refreshing: fetch all, find current, show children
-              _categoriesFuture = ApiService().getCategories().then((all) {
-                final children = _findChildren(all, widget.currentCategoryId!);
-                return children ?? [];
-              });
-            } else {
-              // Root refreshing
-              _categoriesFuture = ApiService().getCategories();
-            }
-          });
-          await _categoriesFuture;
-        },
-        child: FutureBuilder<List<Category>>(
-          future: _categoriesFuture,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(
-                child: CircularProgressIndicator(color: Color(0xFF00FF88)),
-              );
-            }
-
-            if (snapshot.hasError) {
-              // Wrap in centered scrollable to make refresh work even on error
-              return Center(
-                child: SingleChildScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  child: Text(
-                    "Error: ${snapshot.error}",
-                    style: const TextStyle(color: Colors.red),
-                  ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: TextField(
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                hintText: "Search ${widget.title ?? 'Categories'}...",
+                hintStyle: const TextStyle(color: Colors.grey),
+                prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                filled: true,
+                fillColor: const Color(0xFF1E1E1E),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
                 ),
-              );
-            }
-
-            if (!snapshot.hasData || snapshot.data!.isEmpty) {
-              // Wrap in centered scrollable to make refresh work even on empty
-              return Center(
-                child: SingleChildScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  child: Container(
-                    padding: const EdgeInsets.all(20),
-                    child: Text(
-                      AppStrings.of(context, 'no_categories'),
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                  ),
-                ),
-              );
-            }
-
-            final categories = snapshot.data!;
-            return GridView.builder(
-              padding: const EdgeInsets.all(16),
-              physics: const AlwaysScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 1.0, // More square-like, compact
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
               ),
-              itemCount: categories.length,
-              itemBuilder: (context, index) {
-                final cat = categories[index];
-                return GestureDetector(
-                  onTap: () => _handleCategoryTap(cat),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1E1E1E),
-                      borderRadius: BorderRadius.circular(16),
-                      // Subtle gradient for premium feel
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          const Color(0xFF252525),
-                          const Color(0xFF1A1A1A),
-                        ],
+              onChanged: (value) {
+                setState(() {
+                  _searchQuery = value;
+                });
+              },
+            ),
+          ),
+          Expanded(
+            child: RefreshIndicator(
+              color: const Color(0xFF00FF88),
+              onRefresh: () async {
+                // Update User Info
+                await ApiService().getUserInfo().then((_) {
+                  if (mounted) setState(() {});
+                });
+
+                setState(() {
+                  _searchQuery = ''; // Clear search on refresh
+                  if (widget.currentCategoryId != null) {
+                    // Sub-category refreshing: fetch all, find current, show children
+                    _categoriesFuture = ApiService().getCategories().then((
+                      all,
+                    ) {
+                      final children = _findChildren(
+                        all,
+                        widget.currentCategoryId!,
+                      );
+                      return children ?? [];
+                    });
+                  } else {
+                    // Root refreshing
+                    _categoriesFuture = ApiService().getCategories();
+                  }
+                });
+                await _categoriesFuture;
+              },
+              child: FutureBuilder<List<Category>>(
+                future: _categoriesFuture,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(
+                      child: CircularProgressIndicator(
+                        color: Color(0xFF00FF88),
                       ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.3),
-                          blurRadius: 8,
-                          offset: const Offset(0, 4),
+                    );
+                  }
+
+                  if (snapshot.hasError) {
+                    // Wrap in centered scrollable to make refresh work even on error
+                    return Center(
+                      child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        child: Text(
+                          "Error: ${snapshot.error}",
+                          style: const TextStyle(color: Colors.red),
                         ),
-                      ],
-                      border: Border.all(color: Colors.white.withOpacity(0.05)),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        // Category Image or Icon - Smaller & Neater
-                        if (cat.imageUrl.isNotEmpty)
-                          Container(
-                            height: 70, // Fixed reduced height
-                            width: 70,
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(16),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.1),
-                                  blurRadius: 4,
-                                  offset: const Offset(0, 2),
-                                ),
+                      ),
+                    );
+                  }
+
+                  if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                    // Wrap in centered scrollable to make refresh work even on empty
+                    return Center(
+                      child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        child: Container(
+                          padding: const EdgeInsets.all(20),
+                          child: Text(
+                            AppStrings.of(context, 'no_categories'),
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+
+                  final allCategories = snapshot.data!;
+                  final categories = _searchQuery.isEmpty
+                      ? allCategories
+                      : allCategories
+                            .where(
+                              (cat) => cat.name.toLowerCase().contains(
+                                _searchQuery.toLowerCase(),
+                              ),
+                            )
+                            .toList();
+
+                  if (categories.isEmpty) {
+                    return Center(
+                      child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        child: Container(
+                          padding: const EdgeInsets.all(20),
+                          child: const Text(
+                            "No matching categories found",
+                            style: TextStyle(color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+
+                  return GridView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          childAspectRatio: 1.0, // More square-like, compact
+                        ),
+                    itemCount: categories.length,
+                    itemBuilder: (context, index) {
+                      final cat = categories[index];
+                      return GestureDetector(
+                        onTap: () => _handleCategoryTap(cat),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E1E1E),
+                            borderRadius: BorderRadius.circular(16),
+                            // Subtle gradient for premium feel
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                const Color(0xFF252525),
+                                const Color(0xFF1A1A1A),
                               ],
                             ),
-                            child: Image.network(
-                              cat.imageUrl,
-                              fit: BoxFit.contain,
-                              errorBuilder: (context, error, stackTrace) {
-                                return Icon(
-                                  cat.children.isNotEmpty
-                                      ? Icons.folder_open
-                                      : Icons.smartphone,
-                                  size: 30,
-                                  color: Colors.grey,
-                                );
-                              },
-                            ),
-                          )
-                        else
-                          Container(
-                            height: 70,
-                            width: 70,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF00FF88).withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-
-                            child: Icon(
-                              cat.children.isNotEmpty
-                                  ? Icons.folder_open
-                                  : Icons.smartphone,
-                              size: 32,
-                              color: const Color(0xFF00FF88),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.05),
                             ),
                           ),
-                        const SizedBox(height: 12),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                          child: Text(
-                            cat.name,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              height: 1.2,
-                            ),
-                            textAlign: TextAlign.center,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              // Category Image or Icon - Smaller & Neater
+                              if (cat.imageUrl.isNotEmpty)
+                                Container(
+                                  height: 70, // Fixed reduced height
+                                  width: 70,
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(16),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.1),
+                                        blurRadius: 4,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Image.network(
+                                    cat.imageUrl,
+                                    fit: BoxFit.contain,
+                                    errorBuilder: (context, error, stackTrace) {
+                                      return Icon(
+                                        cat.children.isNotEmpty
+                                            ? Icons.folder_open
+                                            : Icons.smartphone,
+                                        size: 30,
+                                        color: Colors.grey,
+                                      );
+                                    },
+                                  ),
+                                )
+                              else
+                                Container(
+                                  height: 70,
+                                  width: 70,
+                                  decoration: BoxDecoration(
+                                    color: const Color(
+                                      0xFF00FF88,
+                                    ).withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  child: Icon(
+                                    cat.children.isNotEmpty
+                                        ? Icons.folder_open
+                                        : Icons.smartphone,
+                                    size: 32,
+                                    color: const Color(0xFF00FF88),
+                                  ),
+                                ),
+                              const SizedBox(height: 12),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12.0,
+                                ),
+                                child: Text(
+                                  cat.name,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    height: 1.2,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            );
-          },
-        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
