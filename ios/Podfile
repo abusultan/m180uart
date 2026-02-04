@@ -43,4 +43,46 @@ post_install do |installer|
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
     end
   end
+
+  # Patch embed frameworks script to avoid xattr/resource-fork codesign failures.
+  frameworks_script = File.join(installer.sandbox.root, 'Target Support Files', 'Pods-Runner', 'Pods-Runner-frameworks.sh')
+  if File.exist?(frameworks_script)
+    script = File.read(frameworks_script)
+
+    script = script.gsub(/^\s*rsync /, '  /opt/homebrew/bin/rsync ')
+    script = script.gsub(/\/opt\/homebrew\/bin\/rsync ([^\n]*)/, '/opt/homebrew/bin/rsync --no-xattrs --no-fileflags \1')
+
+    cleanup_block = <<~'SH'.strip
+      ## XATTR_CLEANUP
+      if [ -d "${destination}/${basename}.framework" ]; then
+        /usr/bin/xattr -cr "${destination}/${basename}.framework" 2>/dev/null || true
+        /usr/bin/xattr -cr "${destination}/${basename}.framework/${basename}" 2>/dev/null || true
+        /usr/bin/find "${destination}/${basename}.framework" -name "._*" -delete 2>/dev/null || true
+        /usr/bin/find "${destination}/${basename}.framework" -name ".DS_Store" -delete 2>/dev/null || true
+        /usr/bin/dot_clean -m "${destination}/${basename}.framework" 2>/dev/null || true
+      fi
+    SH
+
+    if script.include?('## XATTR_CLEANUP')
+      script = script.gsub(
+        /## XATTR_CLEANUP.*?binary="\$\{destination\}\/\$\{basename\}\.framework\/\$\{basename\}"/m,
+        "#{cleanup_block}\n  binary=\"${destination}/${basename}.framework/${basename}\""
+      )
+    else
+      script = script.sub(
+        /binary="\$\{destination\}\/\$\{basename\}\.framework\/\$\{basename\}"/,
+        "#{cleanup_block}\n  binary=\"${destination}/${basename}.framework/${basename}\""
+      )
+    end
+
+    # Disable CocoaPods embed-frameworks codesign (we'll sign in a later step).
+    if script.include?('code_sign_if_enabled()')
+      script = script.gsub(
+        /code_sign_if_enabled\(\)\s*\{.*?\n\}/m,
+        "code_sign_if_enabled() {\n  ## DISABLE_PODS_CODESIGN\n  return 0\n}\n"
+      )
+    end
+
+    File.write(frameworks_script, script)
+  end
 end

@@ -18,6 +18,21 @@ class ScanScreen extends StatefulWidget {
 class _ScanScreenState extends State<ScanScreen> {
   List<ScanResult> _scanResults = [];
   bool _isScanning = false;
+  String _handshakeMode = "auto";
+  String _manualAlgorithm = "HANDSHAKE_NEW";
+
+  final List<Map<String, String>> _handshakeAlgorithms = const [
+    {"label": "Handshake New", "value": "HANDSHAKE_NEW"},
+    {"label": "Generic New", "value": "GENERIC_NEW"},
+    {"label": "DQ", "value": "DQ"},
+    {"label": "SY", "value": "SY"},
+    {"label": "Standard", "value": "STANDARD"},
+    {"label": "Sunshine", "value": "SUNSHINE"},
+    {"label": "Cutter", "value": "CUTTER"},
+    {"label": "Old V1", "value": "OLD_V1"},
+    {"label": "Old V3", "value": "OLD_V3"},
+    {"label": "Devia", "value": "DEVIA"},
+  ];
 
   @override
   void initState() {
@@ -141,6 +156,9 @@ class _ScanScreenState extends State<ScanScreen> {
             handshakeCompleter.complete(success);
           }
         },
+        forcedAlgorithm:
+            _handshakeMode == "manual" ? _manualAlgorithm : null,
+        handshakeMode: _handshakeMode,
       );
 
       handshake.startHandshake();
@@ -269,23 +287,43 @@ class _ScanScreenState extends State<ScanScreen> {
                       style: TextStyle(color: Colors.grey[400]),
                     ),
                     if (!isConnected)
-                      if (!_isScanning)
-                        IconButton(
-                          icon: const Icon(
-                            Icons.refresh,
-                            color: Color(0xFF00FF88),
+                      Row(
+                        children: [
+                          TextButton.icon(
+                            onPressed: _showHandshakeModeDialog,
+                            icon: const Icon(
+                              Icons.tune,
+                              color: Color(0xFF00FF88),
+                              size: 18,
+                            ),
+                            label: Text(
+                              _handshakeMode == "manual"
+                                  ? "Manual"
+                                  : "Auto",
+                              style: const TextStyle(
+                                color: Color(0xFF00FF88),
+                              ),
+                            ),
                           ),
-                          onPressed: _startScan,
-                        )
-                      else
-                        const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Color(0xFF00FF88),
-                          ),
-                        ),
+                          if (!_isScanning)
+                            IconButton(
+                              icon: const Icon(
+                                Icons.refresh,
+                                color: Color(0xFF00FF88),
+                              ),
+                              onPressed: _startScan,
+                            )
+                          else
+                            const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Color(0xFF00FF88),
+                              ),
+                            ),
+                        ],
+                      ),
                   ],
                 ),
               ),
@@ -352,6 +390,109 @@ class _ScanScreenState extends State<ScanScreen> {
           );
         },
       ),
+    );
+  }
+
+  void _showHandshakeModeDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        String tempMode = _handshakeMode;
+        String tempAlgo = _manualAlgorithm;
+
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1E1E1E),
+          title: const Text(
+            "Handshake Mode",
+            style: TextStyle(color: Colors.white),
+          ),
+          content: StatefulBuilder(
+            builder: (context, setInnerState) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  RadioListTile<String>(
+                    value: "auto",
+                    groupValue: tempMode,
+                    title: const Text(
+                      "Auto",
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    onChanged: (val) {
+                      if (val == null) return;
+                      setInnerState(() => tempMode = val);
+                    },
+                    activeColor: const Color(0xFF00FF88),
+                  ),
+                  RadioListTile<String>(
+                    value: "manual",
+                    groupValue: tempMode,
+                    title: const Text(
+                      "Manual",
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    onChanged: (val) {
+                      if (val == null) return;
+                      setInnerState(() => tempMode = val);
+                    },
+                    activeColor: const Color(0xFF00FF88),
+                  ),
+                  if (tempMode == "manual")
+                    DropdownButtonFormField<String>(
+                      value: tempAlgo,
+                      dropdownColor: const Color(0xFF1E1E1E),
+                      decoration: const InputDecoration(
+                        labelText: "Algorithm",
+                        labelStyle: TextStyle(color: Colors.grey),
+                      ),
+                      items:
+                          _handshakeAlgorithms
+                              .map(
+                                (item) => DropdownMenuItem(
+                                  value: item["value"],
+                                  child: Text(
+                                    item["label"] ?? item["value"]!,
+                                    style: const TextStyle(color: Colors.white),
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                      onChanged: (val) {
+                        if (val == null) return;
+                        setInnerState(() => tempAlgo = val);
+                      },
+                    ),
+                ],
+              );
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text(
+                "Cancel",
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  _handshakeMode = tempMode;
+                  _manualAlgorithm = tempAlgo;
+                });
+                Navigator.pop(context);
+              },
+              child: const Text(
+                "Save",
+                style: TextStyle(
+                  color: Color(0xFF00FF88),
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 

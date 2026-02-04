@@ -31,11 +31,32 @@ class CutterBluetoothService {
   blue.BluetoothDevice? get connectedDevice => _connectedDevice;
   String? _serialNumber;
   String? get serialNumber => _serialNumber;
+  String? _lastHandshakeMode;
+  String? get lastHandshakeMode => _lastHandshakeMode;
+
+  String? _preferredHandshakeAlgo;
+  String? _preferredHandshakeMode;
 
   void setSerialNumber(String? serial) {
     _serialNumber = serial;
     _serialUpdateController.add(serial);
   }
+
+  void setPreferredHandshakeForNextConnection(
+    String mode, {
+    String? algorithm,
+  }) {
+    _preferredHandshakeMode = mode;
+    _preferredHandshakeAlgo = algorithm;
+  }
+
+  void clearPreferredHandshakeForNextConnection() {
+    _preferredHandshakeMode = null;
+    _preferredHandshakeAlgo = null;
+  }
+
+  String? get preferredHandshakeMode => _preferredHandshakeMode;
+  String? get preferredHandshakeAlgorithm => _preferredHandshakeAlgo;
 
   void setSuppressAutoHandshake(bool suppress) {
     _suppressAutoHandshake = suppress;
@@ -56,10 +77,12 @@ class CutterBluetoothService {
 
   Future<void> cacheSuccessfulHandshake(
     String agentType,
-    bool isNewVersion,
-  ) async {
+    bool isNewVersion, {
+    String mode = "auto",
+  }) async {
     _successfulAgentType = agentType;
     _successfulIsNewVersion = isNewVersion;
+    _lastHandshakeMode = mode;
     print(
       "Cached successful handshake (Memory): Agent=$agentType, IsNew=$isNewVersion",
     );
@@ -68,6 +91,7 @@ class CutterBluetoothService {
       try {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('handshake_algo_$_serialNumber', agentType);
+        await prefs.setString('handshake_mode_$_serialNumber', mode);
         // IsNewVersion is implicitly tied to the algorithm names usually, but let's store it to be safe if needed eventually
         // For now, simpler to just store the algo string.
         print("Persisted handshake for $_serialNumber: $agentType");
@@ -83,6 +107,16 @@ class CutterBluetoothService {
       return prefs.getString('handshake_algo_$serial');
     } catch (e) {
       print("Error loading cached handshake: $e");
+      return null;
+    }
+  }
+
+  Future<String?> getCachedHandshakeMode(String serial) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString('handshake_mode_$serial');
+    } catch (e) {
+      print("Error loading handshake mode: $e");
       return null;
     }
   }

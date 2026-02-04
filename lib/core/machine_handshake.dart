@@ -8,6 +8,7 @@ class MachineHandshake {
   final CutterBluetoothService _bluetooth;
   final Function(bool) onHandshakeComplete;
   final Function(String) onStatusUpdate;
+  final String _handshakeMode;
 
   // State variables
   bool _isAuthenticated = false;
@@ -18,20 +19,10 @@ class MachineHandshake {
   bool _bd10Sent = false;
   bool _dqProtocolTriggered = false;
   String? _detectedSerial;
+  bool _manualLockApplied = false;
 
   // Systematic Algorithm List
-  final List<String> _algorithms = [
-    "HANDSHAKE_NEW",
-    "GENERIC_NEW",
-    "DQ",
-    "SY",
-    "STANDARD",
-    "SUNSHINE",
-    "CUTTER",
-    "OLD_V1",
-    "OLD_V3",
-    "DEVIA",
-  ];
+  List<String> _algorithms = [];
 
   StreamSubscription? _dataSubscription;
   Timer? _watchdogTimer;
@@ -40,7 +31,26 @@ class MachineHandshake {
     this._bluetooth, {
     required this.onHandshakeComplete,
     required this.onStatusUpdate,
-  });
+    String? forcedAlgorithm,
+    String handshakeMode = "auto",
+  }) : _handshakeMode = handshakeMode {
+    _algorithms =
+        forcedAlgorithm != null
+            ? [forcedAlgorithm]
+            : [
+              "HANDSHAKE_NEW",
+              "GENERIC_NEW",
+              "DQ",
+              "SY",
+              "STANDARD",
+              "SUNSHINE",
+              "CUTTER",
+              "OLD_V1",
+              "OLD_V3",
+              "DEVIA",
+            ];
+    if (forcedAlgorithm != null) _manualLockApplied = true;
+  }
 
   bool get isAuthenticated => _isAuthenticated;
 
@@ -56,6 +66,7 @@ class MachineHandshake {
     _bd10Sent = false;
     _dqProtocolTriggered = false;
     _detectedSerial = null;
+    _manualLockApplied = _algorithms.length == 1;
 
     _bluetooth.setSuppressAutoHandshake(true);
     _dataSubscription = _bluetooth.receivedDataStream.listen(_handleData);
@@ -90,6 +101,11 @@ class MachineHandshake {
 
     String? cachedAlgo = await _bluetooth.getCachedHandshake(serial);
     if (cachedAlgo != null) {
+      String? cachedMode = await _bluetooth.getCachedHandshakeMode(serial);
+      if (cachedMode == "manual") {
+        _lockToAlgorithm(cachedAlgo);
+        return;
+      }
       int idx = _algorithms.indexWhere((a) => a == cachedAlgo);
       if (idx != -1) {
         print("🎯 Cache Hit! Jumping to algorithm: $cachedAlgo");
@@ -99,6 +115,21 @@ class MachineHandshake {
           _triggerDQProtocol();
         }
       }
+    }
+  }
+
+  void _lockToAlgorithm(String algo) {
+    if (_manualLockApplied) return;
+    _manualLockApplied = true;
+    _algorithms = [algo];
+    _currentAlgoIndex = 0;
+    _retryCount = 0;
+    _bd9Sent = false;
+    _bd10Sent = false;
+    _dqProtocolTriggered = false;
+    print("🔒 Manual handshake locked to: $algo");
+    if (algo == "DQ") {
+      _triggerDQProtocol();
     }
   }
 
@@ -223,6 +254,10 @@ class MachineHandshake {
             "📋 Detected Serial: $rawSerial${message.contains("CBM=") ? " (via CBM)" : ""}",
           );
 
+          if (!_manualLockApplied) {
+            _applyManualPreferenceIfAny(rawSerial);
+          }
+
           // Fast-track DQ/SS4070 if identified
           if (rawSerial.toUpperCase().startsWith("DQ")) {
             if (!_bd10Sent && !_isAuthenticated) {
@@ -245,6 +280,10 @@ class MachineHandshake {
           _detectedSerial = rawSerial;
           _bluetooth.setSerialNumber(rawSerial);
           print("📋 Detected Bare Serial: $rawSerial");
+
+          if (!_manualLockApplied) {
+            _applyManualPreferenceIfAny(rawSerial);
+          }
 
           if (rawSerial.toUpperCase().startsWith("DQ")) {
             if (!_bd10Sent && !_isAuthenticated) {
@@ -270,7 +309,11 @@ class MachineHandshake {
         "✅ SUCCESS! Algorithm: $winAlgo for Serial: ${_detectedSerial ?? 'Unknown'}",
       );
       onStatusUpdate("✅ Connected!");
-      _bluetooth.cacheSuccessfulHandshake(winAlgo, true);
+      _bluetooth.cacheSuccessfulHandshake(
+        winAlgo,
+        true,
+        mode: _manualLockApplied ? "manual" : _handshakeMode,
+      );
       _finishHandshake(true);
     } else if (message.contains("RCMD=12,1")) {
       if (!_isAuthenticated) {
@@ -341,6 +384,20 @@ class MachineHandshake {
       print("🚫 All algorithms exhausted.");
       onStatusUpdate("❌ Failed");
       _finishHandshake(false);
+    }
+  }
+
+  Future<void> _applyManualPreferenceIfAny(String serial) async {
+    try {
+      final mode = await _bluetooth.getCachedHandshakeMode(serial);
+      if (mode == "manual") {
+        final algo = await _bluetooth.getCachedHandshake(serial);
+        if (algo != null && algo.isNotEmpty) {
+          _lockToAlgorithm(algo);
+        }
+      }
+    } catch (e) {
+      print("Error applying manual handshake preference: $e");
     }
   }
 
