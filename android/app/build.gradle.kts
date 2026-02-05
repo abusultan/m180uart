@@ -42,3 +42,7 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    implementation("com.caverock:androidsvg:1.4")
+}

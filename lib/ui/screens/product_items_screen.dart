@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
+import 'dart:io';
+import 'dart:typed_data';
 import '../../services/api_service.dart';
 import '../../data/models/product_models.dart';
 import 'device_detail_screen.dart';
+import '../../core/cut_file_transformer.dart';
+import '../../utils/svg_outline.dart';
+import '../../services/svg_renderer.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 class ProductItemsScreen extends StatefulWidget {
@@ -19,6 +24,7 @@ class _ProductItemsScreenState extends State<ProductItemsScreen> {
   bool _isLoading = true;
   String _errorMessage = '';
   String _selectedFilter = 'All';
+  final Map<int, Future<CutPathData?>> _cutPreviewCache = {};
 
   @override
   void initState() {
@@ -74,6 +80,49 @@ class _ProductItemsScreenState extends State<ProductItemsScreen> {
     _applyFilter();
   }
 
+  String _safeUrl(String url) {
+    if (url.isEmpty) return url;
+    return ApiService().normalizeUrl(url);
+  }
+
+  Future<CutPathData?> _loadCutPreview(ProductItem item) {
+    return _cutPreviewCache.putIfAbsent(item.id, () async {
+      final urls = <String>[];
+      if (item.pltUrl.isNotEmpty) urls.add(item.pltUrl);
+      if (item.sjcUrl.isNotEmpty && item.sjcUrl != item.pltUrl) {
+        urls.add(item.sjcUrl);
+      }
+      for (final url in urls) {
+        final file = await ApiService().downloadFile(url);
+        if (file == null) continue;
+        final bytes = await file.readAsBytes();
+        final data = CutFileTransformer.decodePathData(bytes);
+        if (data != null) return data;
+      }
+      return null;
+    });
+  }
+
+  Widget _buildCutPreviewFallback(ProductItem item) {
+    return FutureBuilder<CutPathData?>(
+      future: _loadCutPreview(item),
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: Color(0xFF00FF88)),
+          );
+        }
+        final data = snap.data;
+        if (data == null) {
+          return const Center(
+            child: Icon(Icons.broken_image, color: Colors.grey, size: 40),
+          );
+        }
+        return CustomPaint(painter: CutPreviewPainter(data));
+      },
+    );
+  }
+
   Widget _buildItemPreview(ProductItem item) {
     if (item.imageUrl.isEmpty) {
       return const Center(
@@ -81,8 +130,9 @@ class _ProductItemsScreenState extends State<ProductItemsScreen> {
       );
     }
 
-    final url = item.imageUrl;
-    final isSvg = url.toLowerCase().endsWith('.svg');
+    final url = _safeUrl(item.imageUrl);
+    final lowerUrl = url.toLowerCase();
+    final isSvg = lowerUrl.contains('.svg');
     if (!isSvg) {
       return Image.network(
         url,
@@ -107,14 +157,98 @@ class _ProductItemsScreenState extends State<ProductItemsScreen> {
       );
     }
 
-    return SvgPicture.network(
-      url,
-      width: double.infinity,
-      height: double.infinity,
-      fit: BoxFit.contain,
-      placeholderBuilder: (context) => const Center(
-        child: CircularProgressIndicator(color: Color(0xFF00FF88)),
-      ),
+    return FutureBuilder<File?>(
+      future: ApiService().downloadFile(url),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: Color(0xFF00FF88)),
+          );
+        }
+        final file = snapshot.data;
+        if (file == null) {
+          return _buildCutPreviewFallback(item);
+        }
+        if (Platform.isAndroid) {
+          return FutureBuilder<Uint8List>(
+            future: file.readAsBytes(),
+            builder: (context, bytesSnap) {
+              if (bytesSnap.connectionState == ConnectionState.waiting) {
+                return const Center(
+                  child: CircularProgressIndicator(color: Color(0xFF00FF88)),
+                );
+              }
+              final bytes = bytesSnap.data;
+              if (bytes == null || bytes.isEmpty) {
+                return _buildCutPreviewFallback(item);
+              }
+              return LayoutBuilder(
+                builder: (context, constraints) {
+                  final dpr = MediaQuery.of(context).devicePixelRatio;
+                  final width = constraints.maxWidth.isFinite
+                      ? constraints.maxWidth
+                      : 180.0;
+                  final height = constraints.maxHeight.isFinite
+                      ? constraints.maxHeight
+                      : 180.0;
+                  final widthPx = (width * dpr).clamp(1, 1024).toInt();
+                  final heightPx = (height * dpr).clamp(1, 1024).toInt();
+                  return FutureBuilder<Uint8List?>(
+                    future: SvgRenderer.renderSvgBytesToPng(
+                      bytes,
+                      width: widthPx,
+                      height: heightPx,
+                    ),
+                    builder: (context, pngSnap) {
+                      if (pngSnap.connectionState == ConnectionState.waiting) {
+                        return const Center(
+                          child:
+                              CircularProgressIndicator(color: Color(0xFF00FF88)),
+                        );
+                      }
+                      final png = pngSnap.data;
+                      if (png == null) {
+                        return _buildCutPreviewFallback(item);
+                      }
+                      return Image.memory(
+                        png,
+                        width: double.infinity,
+                        height: double.infinity,
+                        fit: BoxFit.contain,
+                        gaplessPlayback: true,
+                      );
+                    },
+                  );
+                },
+              );
+            },
+          );
+        }
+
+        return FutureBuilder<String>(
+          future: file.readAsString(),
+          builder: (context, svgSnap) {
+            if (svgSnap.connectionState == ConnectionState.waiting) {
+              return const Center(
+                child: CircularProgressIndicator(color: Color(0xFF00FF88)),
+              );
+            }
+            final svg = svgSnap.data;
+            if (svg == null || svg.isEmpty) {
+              return const Center(
+                child: Icon(Icons.broken_image, color: Colors.grey, size: 40),
+              );
+            }
+            final outlineSvg = toOutlineSvg(svg);
+            return SvgPicture.string(
+              outlineSvg,
+              width: double.infinity,
+              height: double.infinity,
+              fit: BoxFit.contain,
+            );
+          },
+        );
+      },
     );
   }
 

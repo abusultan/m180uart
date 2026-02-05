@@ -328,11 +328,36 @@ class ApiService {
         // Assuming full URL for now based on Java 'downloadFile(@Url String fileUrl)'
       }
 
-      await _dio.download(url, savePath);
+      final safeUrl = _safeUrl(url);
+      await _dio.download(safeUrl, savePath);
       return File(savePath);
     } catch (e) {
       print('Download Error: $e');
       return null;
     }
+  }
+
+  String normalizeUrl(String url) => _safeUrl(url);
+
+  String _safeUrl(String url) {
+    if (url.isEmpty) return url;
+    var trimmed = url.trim();
+    if (trimmed.isEmpty) return trimmed;
+
+    final base = _dio.options.baseUrl;
+    final fileBase =
+        base.endsWith('/api/') ? base.replaceFirst(RegExp(r'/api/?$'), '/') : base;
+
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return Uri.encodeFull(trimmed);
+    }
+
+    trimmed = trimmed.replaceFirst(RegExp(r'^/'), '');
+    trimmed = trimmed.replaceFirst(RegExp(r'^cutter/'), '');
+    trimmed = trimmed.replaceFirst(RegExp(r'^storage/app/public/'), 'storage/');
+    trimmed = trimmed.replaceFirst(RegExp(r'^public/storage/'), 'storage/');
+
+    final full = '$fileBase$trimmed';
+    return Uri.encodeFull(full);
   }
 }

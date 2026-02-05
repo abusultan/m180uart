@@ -1,9 +1,12 @@
 import 'dart:io';
 import 'dart:async';
 import 'dart:math';
+import 'dart:typed_data';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter/material.dart';
 import '../../services/api_service.dart';
+import '../../services/svg_renderer.dart';
+import '../../utils/svg_outline.dart';
 import '../../services/bluetooth_service.dart';
 import '../../data/models/product_models.dart';
 import '../../core/machine_handshake.dart';
@@ -166,9 +169,9 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     }
 
     if (_previewFailed) {
-      final imageUrl = widget.productItem?.imageUrl ?? '';
+      final imageUrl = _safeUrl(widget.productItem?.imageUrl ?? '');
       if (imageUrl.isNotEmpty) {
-        if (imageUrl.toLowerCase().endsWith('.svg')) {
+        if (imageUrl.toLowerCase().contains('.svg')) {
           return Stack(
             children: [
               Positioned.fill(
@@ -234,6 +237,66 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
             ),
           );
         }
+        if (Platform.isAndroid) {
+          return FutureBuilder<Uint8List>(
+            future: file.readAsBytes(),
+            builder: (context, bytesSnap) {
+              if (bytesSnap.connectionState == ConnectionState.waiting) {
+                return const Center(
+                  child: CircularProgressIndicator(color: Color(0xFF00FF88)),
+                );
+              }
+              final bytes = bytesSnap.data;
+              if (bytes == null || bytes.isEmpty) {
+                return const Center(
+                  child: Icon(Icons.broken_image, color: Colors.grey, size: 50),
+                );
+              }
+              return LayoutBuilder(
+                builder: (context, constraints) {
+                  final dpr = MediaQuery.of(context).devicePixelRatio;
+                  final width = constraints.maxWidth.isFinite
+                      ? constraints.maxWidth
+                      : 260.0;
+                  final height = constraints.maxHeight.isFinite
+                      ? constraints.maxHeight
+                      : 260.0;
+                  final widthPx = (width * dpr).clamp(1, 2048).toInt();
+                  final heightPx = (height * dpr).clamp(1, 2048).toInt();
+                  return FutureBuilder<Uint8List?>(
+                    future: SvgRenderer.renderSvgBytesToPng(
+                      bytes,
+                      width: widthPx,
+                      height: heightPx,
+                    ),
+                    builder: (context, pngSnap) {
+                      if (pngSnap.connectionState == ConnectionState.waiting) {
+                        return const Center(
+                          child:
+                              CircularProgressIndicator(color: Color(0xFF00FF88)),
+                        );
+                      }
+                      final png = pngSnap.data;
+                      if (png == null) {
+                        return const Center(
+                          child: Icon(Icons.broken_image, color: Colors.grey, size: 50),
+                        );
+                      }
+                      return Image.memory(
+                        png,
+                        fit: BoxFit.contain,
+                        width: double.infinity,
+                        height: double.infinity,
+                        gaplessPlayback: true,
+                      );
+                    },
+                  );
+                },
+              );
+            },
+          );
+        }
+
         return FutureBuilder<String>(
           future: file.readAsString(),
           builder: (context, svgSnap) {
@@ -261,66 +324,12 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     );
   }
 
-  String _toOutlineSvg(String svg) {
-    String result = svg;
-    if (!result.contains('<style')) {
-      result = result.replaceFirst(
-        RegExp(r'<svg\b[^>]*>'),
-        (match) =>
-            '${match.group(0)}<style>*{fill:none;stroke:black;stroke-width:2;}</style>',
-      );
-    }
-    result = result.replaceAll(RegExp(r'fill=\"[^\"]*\"'), 'fill="none"');
-    result = result.replaceAll(RegExp(r'fill:[^;\\"]*;?'), 'fill:none;');
-    result = result.replaceAll(RegExp(r"fill='[^']*'"), 'fill="none"');
-    result = result.replaceAll(
-      RegExp(r'fill:#?[0-9a-fA-F]{3,8}'),
-      'fill:none',
-    );
-    result = result.replaceAll(
-      RegExp(r'fill\\s*=\\s*[^\\s>]+'),
-      'fill="none"',
-    );
-    result = result.replaceAll(
-      RegExp(r'style=\"([^\"]*)\"'),
-      (m) {
-        final s = m.group(1) ?? '';
-        final cleaned = s.replaceAll(RegExp(r'fill\\s*:[^;]+;?'), '');
-        return 'style="$cleaned"';
-      },
-    );
-    result = result.replaceAll(
-      RegExp(r'<svg\\b[^>]*>'),
-      (m) {
-        final tag = m.group(0) ?? '';
-        if (tag.contains('fill=')) {
-          return tag.replaceAll(RegExp(r'fill\\s*=\\s*[^\\s>]+'), 'fill="none"');
-        }
-        return tag;
-      },
-    );
-    result = result.replaceAll(
-      RegExp(r'<path\b'),
-      '<path stroke="black" stroke-width="2" fill="none"',
-    );
-    result = result.replaceAll(
-      RegExp(r'<rect\b'),
-      '<rect stroke="black" stroke-width="2" fill="none"',
-    );
-    result = result.replaceAll(
-      RegExp(r'<circle\b'),
-      '<circle stroke="black" stroke-width="2" fill="none"',
-    );
-    result = result.replaceAll(
-      RegExp(r'<polygon\b'),
-      '<polygon stroke="black" stroke-width="2" fill="none"',
-    );
-    result = result.replaceAll(
-      RegExp(r'<polyline\b'),
-      '<polyline stroke="black" stroke-width="2" fill="none"',
-    );
-    return result;
+  String _safeUrl(String url) {
+    if (url.isEmpty) return url;
+    return ApiService().normalizeUrl(url);
   }
+
+  String _toOutlineSvg(String svg) => toOutlineSvg(svg);
 
   Positioned _buildAngleBadge() {
     return Positioned(
