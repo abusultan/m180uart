@@ -5,6 +5,7 @@ import '../../services/api_service.dart';
 import '../../services/bluetooth_service.dart';
 import '../../providers/language_provider.dart';
 import 'login_screen.dart';
+import 'cut_settings_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -108,6 +109,29 @@ class ProfileScreen extends StatelessWidget {
               Icons.confirmation_number,
               AppStrings.of(context, 'remaining_pieces'),
               user?.remainingPieces.toString() ?? "0",
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              tileColor: const Color(0xFF1E1E1E),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              leading: const Icon(
+                Icons.tune,
+                color: Color(0xFF00FF88),
+              ),
+              title: const Text(
+                'Cut Settings',
+                style: TextStyle(color: Colors.white),
+              ),
+              trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => const CutSettingsScreen(),
+                  ),
+                );
+              },
             ),
             const SizedBox(height: 32),
             // Language Selection

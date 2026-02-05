@@ -40,6 +40,30 @@ class CutterBluetoothService {
   void setSerialNumber(String? serial) {
     _serialNumber = serial;
     _serialUpdateController.add(serial);
+    // Persist machine type for UI filtering even when not connected
+    if (serial != null) {
+      _persistLastMachineType(serial);
+    }
+  }
+
+  Future<void> _persistLastMachineType(String serial) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final isDQ = serial.toUpperCase().startsWith("DQ");
+      await prefs.setBool('last_machine_is_dq', isDQ);
+    } catch (e) {
+      print("Error persisting machine type: $e");
+    }
+  }
+
+  Future<bool?> getLastMachineIsDQ() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool('last_machine_is_dq');
+    } catch (e) {
+      print("Error loading machine type: $e");
+      return null;
+    }
   }
 
   void setPreferredHandshakeForNextConnection(
@@ -265,22 +289,26 @@ class CutterBluetoothService {
     }
   }
 
-  Future<void> writeBytes(List<int> bytes) async {
+  Future<void> writeBytes(
+    List<int> bytes, {
+    bool forceWithResponse = false,
+    int chunkSize = 20,
+    int packetDelayMs = 20,
+  }) async {
     if (_writeCharacteristic == null) throw Exception("Not connected");
-
-    int chunkSize = 20; // Safe BLE default
 
     for (int i = 0; i < bytes.length; i += chunkSize) {
       int end = (i + chunkSize < bytes.length) ? i + chunkSize : bytes.length;
       List<int> chunk = bytes.sublist(i, end);
 
-      if (_writeCharacteristic!.properties.writeWithoutResponse) {
+      if (!forceWithResponse &&
+          _writeCharacteristic!.properties.writeWithoutResponse) {
         await _writeCharacteristic!.write(chunk, withoutResponse: true);
       } else {
         await _writeCharacteristic!.write(chunk);
       }
       // Small delay to prevent flooding
-      await Future.delayed(const Duration(milliseconds: 20));
+      await Future.delayed(Duration(milliseconds: packetDelayMs));
     }
   }
 

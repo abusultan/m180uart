@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter/material.dart';
 import '../../services/api_service.dart';
@@ -7,8 +8,10 @@ import '../../services/bluetooth_service.dart';
 import '../../data/models/product_models.dart';
 import '../../core/machine_handshake.dart';
 import 'scan_screen.dart';
-import '../../utils/digit_mapper.dart';
 import '../../core/app_strings.dart';
+import '../../services/cut_settings_service.dart';
+import '../../core/cut_file_transformer.dart';
+import '../../ui/screens/cut_settings_screen.dart';
 
 class DeviceDetailScreen extends StatefulWidget {
   final ProductItem? productItem;
@@ -21,9 +24,17 @@ class DeviceDetailScreen extends StatefulWidget {
 
 class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   final CutterBluetoothService _bluetooth = CutterBluetoothService();
+  final CutSettingsService _cutSettings = CutSettingsService();
 
-  double _speed = 15;
-  double _force = 10;
+  final int _defaultSpeed = 15;
+  final int _defaultPressure = 10;
+  bool _autoFeed = true;
+  bool _angleEnabled = false;
+  double _angleValue = 0;
+  CutPathData? _previewData;
+  CutPathData? _baseData;
+  bool _previewLoading = false;
+  bool _previewFailed = false;
   bool _isCutting = false;
   bool _isDownloading = false;
   String _status = "Ready";
@@ -33,27 +44,323 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   void initState() {
     super.initState();
     _checkConnection();
+    _loadCutSettings().then((_) => _loadPreview());
   }
 
   void _checkConnection() {
     setState(() {}); // Refresh UI state based on connection
   }
 
-  /*
-  Future<void> _setSpeed(double value) async {
-    setState(() => _speed = value);
-    if (_bluetooth.isConnected) {
-      await _bluetooth.write("BD:4,${value.toInt()};");
-    }
+  Future<void> _loadCutSettings() async {
+    final autoFeed = await _cutSettings.getAutoFeed();
+    final angleEnabled = await _cutSettings.getAngleEnabled();
+    final angleValue = await _cutSettings.getAngleValue();
+    if (!mounted) return;
+    setState(() {
+      _autoFeed = autoFeed;
+      _angleEnabled = angleEnabled;
+      _angleValue = angleValue;
+    });
   }
 
-  Future<void> _setForce(double value) async {
-    setState(() => _force = value);
-    if (_bluetooth.isConnected) {
-      await _bluetooth.write("BD:3,${value.toInt()};");
+  Future<void> _loadPreview() async {
+    if (widget.productItem == null || _previewLoading) return;
+
+    setState(() {
+      _previewLoading = true;
+      _previewFailed = false;
+    });
+
+    String? serial = _bluetooth.serialNumber;
+    bool isDQ = serial != null && serial.toUpperCase().startsWith("DQ");
+
+    String url;
+    if (isDQ) {
+      url = widget.productItem!.pltUrl.isNotEmpty
+          ? widget.productItem!.pltUrl
+          : widget.productItem!.sjcUrl;
+    } else {
+      url = widget.productItem!.sjcUrl.isNotEmpty
+          ? widget.productItem!.sjcUrl
+          : widget.productItem!.pltUrl;
     }
+
+    if (url.isEmpty) {
+      setState(() {
+        _previewLoading = false;
+        _previewFailed = true;
+      });
+      return;
+    }
+
+    final file = await ApiService().downloadFile(url);
+    if (file == null) {
+      setState(() {
+        _previewLoading = false;
+        _previewFailed = true;
+      });
+      return;
+    }
+
+    _cutFile ??= file;
+    final bytes = await file.readAsBytes();
+    final data = CutFileTransformer.decodePathData(bytes);
+
+    if (!mounted) return;
+    if (data == null) {
+      setState(() {
+        _previewLoading = false;
+        _previewFailed = true;
+      });
+      return;
+    }
+
+    final rotated = (_angleEnabled && _angleValue != 0)
+        ? CutFileTransformer.rotatePathData(data, -_angleValue)
+        : data;
+
+    setState(() {
+      _baseData = data;
+      _previewData = rotated;
+      _previewLoading = false;
+      _previewFailed = false;
+    });
   }
-  */
+
+  bool _isDQMachine() {
+    final serial = _bluetooth.serialNumber;
+    return serial != null && serial.toUpperCase().startsWith("DQ");
+  }
+
+  Future<void> _sendSpeedCommand(int level) async {
+    await _bluetooth.write("BD:4,$level;");
+  }
+
+  Future<void> _sendPressureCommand(int level) async {
+    await _bluetooth.write("BD:3,$level;");
+  }
+
+  Future<void> _sendAutoFeedCommand(bool enabled) async {
+    final cmd = enabled ? ";BD:34,1;BD:34;" : ";BD:34,0;BD:34;";
+    await _bluetooth.write(cmd);
+  }
+
+  Widget _buildPreview() {
+    if (_previewLoading) {
+      return const Center(
+        child: CircularProgressIndicator(color: Color(0xFF00FF88)),
+      );
+    }
+
+    if (_previewData != null) {
+      return Stack(
+        children: [
+          Positioned.fill(
+            child: CustomPaint(
+              painter: CutPreviewPainter(_previewData!),
+            ),
+          ),
+          _buildAngleBadge(),
+        ],
+      );
+    }
+
+    if (_previewFailed) {
+      final imageUrl = widget.productItem?.imageUrl ?? '';
+      if (imageUrl.isNotEmpty) {
+        if (imageUrl.toLowerCase().endsWith('.svg')) {
+          return Stack(
+            children: [
+              Positioned.fill(
+                child: Transform.rotate(
+                  angle: -_angleValue * 3.141592653589793 / 180.0,
+                  alignment: Alignment.center,
+                  child: _buildSvgOutline(imageUrl),
+                ),
+              ),
+              _buildAngleBadge(),
+            ],
+          );
+        }
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: Transform.rotate(
+                angle: -_angleValue * 3.141592653589793 / 180.0,
+                alignment: Alignment.center,
+                child: Image.network(
+                  imageUrl,
+                  fit: BoxFit.contain,
+                  errorBuilder: (c, e, s) => const Center(
+                    child: Icon(
+                      Icons.broken_image,
+                      color: Colors.grey,
+                      size: 50,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            _buildAngleBadge(),
+          ],
+        );
+      }
+      return const Center(
+        child: Icon(Icons.broken_image, color: Colors.grey, size: 50),
+      );
+    }
+
+    return const SizedBox.shrink();
+  }
+
+  Widget _buildSvgOutline(String url) {
+    return FutureBuilder<File?>(
+      future: ApiService().downloadFile(url),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: Color(0xFF00FF88)),
+          );
+        }
+        final file = snapshot.data;
+        if (file == null) {
+          return SvgPicture.network(
+            url,
+            fit: BoxFit.contain,
+            width: double.infinity,
+            height: double.infinity,
+            placeholderBuilder: (context) => const Center(
+              child: CircularProgressIndicator(color: Color(0xFF00FF88)),
+            ),
+          );
+        }
+        return FutureBuilder<String>(
+          future: file.readAsString(),
+          builder: (context, svgSnap) {
+            if (svgSnap.connectionState == ConnectionState.waiting) {
+              return const Center(
+                child: CircularProgressIndicator(color: Color(0xFF00FF88)),
+              );
+            }
+            final svg = svgSnap.data;
+            if (svg == null || svg.isEmpty) {
+              return const Center(
+                child: Icon(Icons.broken_image, color: Colors.grey, size: 50),
+              );
+            }
+            final outlineSvg = _toOutlineSvg(svg);
+            return SvgPicture.string(
+              outlineSvg,
+              fit: BoxFit.contain,
+              width: double.infinity,
+              height: double.infinity,
+            );
+          },
+        );
+      },
+    );
+  }
+
+  String _toOutlineSvg(String svg) {
+    String result = svg;
+    if (!result.contains('<style')) {
+      result = result.replaceFirst(
+        RegExp(r'<svg\b[^>]*>'),
+        (match) =>
+            '${match.group(0)}<style>*{fill:none;stroke:black;stroke-width:2;}</style>',
+      );
+    }
+    result = result.replaceAll(RegExp(r'fill=\"[^\"]*\"'), 'fill="none"');
+    result = result.replaceAll(RegExp(r'fill:[^;\\"]*;?'), 'fill:none;');
+    result = result.replaceAll(RegExp(r"fill='[^']*'"), 'fill="none"');
+    result = result.replaceAll(
+      RegExp(r'fill:#?[0-9a-fA-F]{3,8}'),
+      'fill:none',
+    );
+    result = result.replaceAll(
+      RegExp(r'fill\\s*=\\s*[^\\s>]+'),
+      'fill="none"',
+    );
+    result = result.replaceAll(
+      RegExp(r'style=\"([^\"]*)\"'),
+      (m) {
+        final s = m.group(1) ?? '';
+        final cleaned = s.replaceAll(RegExp(r'fill\\s*:[^;]+;?'), '');
+        return 'style="$cleaned"';
+      },
+    );
+    result = result.replaceAll(
+      RegExp(r'<svg\\b[^>]*>'),
+      (m) {
+        final tag = m.group(0) ?? '';
+        if (tag.contains('fill=')) {
+          return tag.replaceAll(RegExp(r'fill\\s*=\\s*[^\\s>]+'), 'fill="none"');
+        }
+        return tag;
+      },
+    );
+    result = result.replaceAll(
+      RegExp(r'<path\b'),
+      '<path stroke="black" stroke-width="2" fill="none"',
+    );
+    result = result.replaceAll(
+      RegExp(r'<rect\b'),
+      '<rect stroke="black" stroke-width="2" fill="none"',
+    );
+    result = result.replaceAll(
+      RegExp(r'<circle\b'),
+      '<circle stroke="black" stroke-width="2" fill="none"',
+    );
+    result = result.replaceAll(
+      RegExp(r'<polygon\b'),
+      '<polygon stroke="black" stroke-width="2" fill="none"',
+    );
+    result = result.replaceAll(
+      RegExp(r'<polyline\b'),
+      '<polyline stroke="black" stroke-width="2" fill="none"',
+    );
+    return result;
+  }
+
+  Positioned _buildAngleBadge() {
+    return Positioned(
+      left: 16,
+      top: 16,
+      child: InkWell(
+        onTap: () async {
+          final newAngle = await showAngleDialog(
+            context,
+            _angleValue,
+          );
+          if (newAngle == null) return;
+          await _cutSettings.setAngleValue(newAngle);
+          await _cutSettings.setAngleEnabled(true);
+          if (!mounted) return;
+          setState(() {
+            _angleValue = newAngle;
+            _angleEnabled = true;
+          });
+          await _loadPreview();
+        },
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: _angleValue == 0 ? const Color(0xFF00AEEF) : Colors.red,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            'Angle(${_angleValue.toStringAsFixed(1)}°)',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
 
   Future<void> _downloadFile() async {
     if (widget.productItem == null) return;
@@ -166,12 +473,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       await Future.delayed(const Duration(milliseconds: 2000));
       if (!mounted) return;
 
-      // 3. Set Params
-      await _bluetooth.write("BD:3,${_force.toInt()};");
-      await Future.delayed(const Duration(milliseconds: 200));
-      await _bluetooth.write("BD:4,${_speed.toInt()};");
-      await Future.delayed(const Duration(milliseconds: 200));
-      if (!mounted) return;
+      // 3. Set Params (disabled per user request)
 
       // 4. Send File Data
       setState(() => _status = AppStrings.of(context, 'status_sending_data'));
@@ -194,6 +496,13 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         // Standard Machines: Read bytes directly (User confirmed SRC/SJC file for Sunshine New)
         // Reverted PLT encryption as per user feedback
         bytesToSend = await _cutFile!.readAsBytes();
+      }
+
+      if (_angleEnabled && _angleValue != 0) {
+        bytesToSend = CutFileTransformer.applyAngleToBytes(
+          inputBytes: bytesToSend,
+          angleDegrees: _angleValue,
+        );
       }
 
       int chunkSize = 2048;
@@ -261,6 +570,11 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     int remaining = ApiService().currentUser?.remainingPieces ?? 0;
     bool hasBalance = remaining > 0;
 
+    final sizeText = _previewData == null
+        ? null
+        : "W:${(_previewData!.maxX - _previewData!.minX).abs().round()} "
+            "L:${(_previewData!.maxY - _previewData!.minY).abs().round()} mm";
+
     return Scaffold(
       appBar: AppBar(
         title: Text(AppStrings.of(context, 'cutter_control_title')),
@@ -278,50 +592,55 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // Product Image
-                      if (widget.productItem?.imageUrl.isNotEmpty ?? false)
+                      // Preview
+                      if (sizeText != null)
                         Padding(
-                          padding: const EdgeInsets.only(bottom: 20.0),
-                          child: AspectRatio(
-                            aspectRatio: 1.4,
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(16),
-                              child:
-                                  widget.productItem!.imageUrl
-                                      .toLowerCase()
-                                      .endsWith('.svg')
-                                  ? SvgPicture.network(
-                                      widget.productItem!.imageUrl,
-                                      fit: BoxFit.contain,
-                                      width: double.infinity,
-                                      height: double.infinity,
-                                      colorFilter: const ColorFilter.mode(
-                                        Colors.white,
-                                        BlendMode.srcIn,
-                                      ),
-                                      placeholderBuilder: (context) =>
-                                          const Center(
-                                            child: CircularProgressIndicator(
-                                              color: Color(0xFF00FF88),
-                                            ),
-                                          ),
-                                    )
-                                  : Image.network(
-                                      widget.productItem!.imageUrl,
-                                      fit: BoxFit.contain,
-                                      width: double.infinity,
-                                      height: double.infinity,
-                                      errorBuilder: (c, e, s) => const Center(
-                                        child: Icon(
-                                          Icons.broken_image,
-                                          color: Colors.grey,
-                                          size: 50,
-                                        ),
-                                      ),
-                                    ),
+                          padding: const EdgeInsets.only(bottom: 10.0),
+                          child: Stack(
+                            children: [
+                              Center(
+                                child: Text(
+                                  sizeText,
+                                  style: const TextStyle(
+                                    color: Colors.black54,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              Positioned(
+                                right: 0,
+                                top: -6,
+                                child: IconButton(
+                                  icon: const Icon(
+                                    Icons.favorite_border,
+                                    color: Colors.grey,
+                                  ),
+                                  onPressed: () {},
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 16.0),
+                        child: AspectRatio(
+                          aspectRatio: 1.4,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(16),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                border: Border.all(
+                                  color: const Color(0xFFDDDDDD),
+                                  width: 1,
+                                ),
+                              ),
+                              child: _buildPreview(),
                             ),
                           ),
                         ),
+                      ),
 
                       // Product Info
                       Text(
@@ -374,89 +693,12 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
               */
                       const SizedBox(height: 40),
 
-                      // Connected Controls
-                      /*
-                      if (isConnected) ...[
-                        // Speed Control
-                        const Text(
-                          "Speed",
-                          style: TextStyle(color: Colors.grey, fontSize: 14),
-                        ),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Slider(
-                                value: _speed,
-                                min: 1,
-                                max: 20,
-                                activeColor: const Color(0xFF00FF88),
-                                onChanged: _setSpeed,
-                              ),
-                            ),
-                            Text(
-                              "${_speed.toInt()}",
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 18,
-                              ),
-                            ),
-                          ],
-                        ),
-
-                        const SizedBox(height: 20),
-
-                        // Force Control
-                        const Text(
-                          "Force",
-                          style: TextStyle(color: Colors.grey, fontSize: 14),
-                        ),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Slider(
-                                value: _force,
-                                min: 1,
-                                max: 30,
-                                activeColor: const Color(0xFF00FF88),
-                                onChanged: _setForce,
-                              ),
-                            ),
-                            Text(
-                              "${_force.toInt()}",
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 18,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                      */
-                      const SizedBox(height: 40),
-
+                      // Connected Controls are now in Cut Settings
                       const Spacer(),
 
-                      if (isConnected)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 16.0),
-                          child: Text(
-                            "${AppStrings.of(context, 'remaining')}: $remaining",
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: hasBalance
-                                  ? const Color(0xFF00FF88)
-                                  : Colors.red,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-
-                      // Action Button
+                      // Action Button (bottom)
                       SizedBox(
-                        height: 60,
+                        height: 56,
                         child: ElevatedButton(
                           onPressed:
                               _isCutting ||
@@ -514,6 +756,22 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                                 ),
                         ),
                       ),
+
+                      if (isConnected)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 12.0),
+                          child: Text(
+                            "${AppStrings.of(context, 'remaining')}: $remaining",
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: hasBalance
+                                  ? const Color(0xFF00FF88)
+                                  : Colors.red,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -554,4 +812,57 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
           return val;
         });
   }
+}
+
+class CutPreviewPainter extends CustomPainter {
+  CutPreviewPainter(this.data);
+
+  final CutPathData data;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final width = data.maxX - data.minX;
+    final height = data.maxY - data.minY;
+    if (width == 0 || height == 0) return;
+
+    const padding = 16.0;
+    final scaleX = (size.width - padding * 2) / width;
+    final scaleY = (size.height - padding * 2) / height;
+    final scale = scaleX < scaleY ? scaleX : scaleY;
+
+    final drawWidth = width * scale;
+    final drawHeight = height * scale;
+    final offsetX = (size.width - drawWidth) / 2;
+    final offsetY = (size.height - drawHeight) / 2;
+
+    final path = Path();
+    bool started = false;
+    for (int i = 0; i < data.points.length; i++) {
+      final p = data.points[i];
+      final x = (p.dx - data.minX) * scale + offsetX;
+      final y = (p.dy - data.minY) * scale + offsetY;
+      if (!started || !data.drawFlags[i]) {
+        path.moveTo(x, y);
+        started = true;
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+
+    final paint = Paint()
+      ..color = Colors.black87
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    canvas.drawPath(path, paint);
+
+  }
+
+  @override
+  bool shouldRepaint(covariant CutPreviewPainter oldDelegate) {
+    return oldDelegate.data != data;
+  }
+
 }

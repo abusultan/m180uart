@@ -74,6 +74,51 @@ class _ProductItemsScreenState extends State<ProductItemsScreen> {
     _applyFilter();
   }
 
+  Widget _buildItemPreview(ProductItem item) {
+    if (item.imageUrl.isEmpty) {
+      return const Center(
+        child: Icon(Icons.image_not_supported, color: Colors.grey, size: 40),
+      );
+    }
+
+    final url = item.imageUrl;
+    final isSvg = url.toLowerCase().endsWith('.svg');
+    if (!isSvg) {
+      return Image.network(
+        url,
+        width: double.infinity,
+        height: double.infinity,
+        fit: BoxFit.contain,
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return Center(
+            child: CircularProgressIndicator(
+              value: loadingProgress.expectedTotalBytes != null
+                  ? loadingProgress.cumulativeBytesLoaded /
+                      loadingProgress.expectedTotalBytes!
+                  : null,
+              color: const Color(0xFF00FF88),
+            ),
+          );
+        },
+        errorBuilder: (context, error, stackTrace) => const Center(
+          child: Icon(Icons.broken_image, color: Colors.grey, size: 40),
+        ),
+      );
+    }
+
+    return SvgPicture.network(
+      url,
+      width: double.infinity,
+      height: double.infinity,
+      fit: BoxFit.contain,
+      placeholderBuilder: (context) => const Center(
+        child: CircularProgressIndicator(color: Color(0xFF00FF88)),
+      ),
+    );
+  }
+
+
   Widget _buildFilterButton(String title, bool isSelected) {
     return Expanded(
       child: GestureDetector(
@@ -206,75 +251,11 @@ class _ProductItemsScreenState extends State<ProductItemsScreen> {
                                     borderRadius: const BorderRadius.vertical(
                                       top: Radius.circular(15),
                                     ),
-                                    child: item.imageUrl.isNotEmpty
-                                        ? (item.imageUrl.toLowerCase().endsWith(
-                                                '.svg',
-                                              )
-                                              ? SvgPicture.network(
-                                                  item.imageUrl,
-                                                  width: double.infinity,
-                                                  height: double.infinity,
-                                                  fit: BoxFit.contain,
-                                                  placeholderBuilder:
-                                                      (context) => const Center(
-                                                        child:
-                                                            CircularProgressIndicator(
-                                                              color: Color(
-                                                                0xFF00FF88,
-                                                              ),
-                                                            ),
-                                                      ),
-                                                  colorFilter:
-                                                      const ColorFilter.mode(
-                                                        Colors.white,
-                                                        BlendMode.srcIn,
-                                                      ),
-                                                )
-                                              : Image.network(
-                                                  item.imageUrl,
-                                                  width: double.infinity,
-                                                  height: double.infinity,
-                                                  fit: BoxFit.contain,
-                                                  loadingBuilder: (context, child, loadingProgress) {
-                                                    if (loadingProgress == null)
-                                                      return child;
-                                                    return Center(
-                                                      child: CircularProgressIndicator(
-                                                        value:
-                                                            loadingProgress
-                                                                    .expectedTotalBytes !=
-                                                                null
-                                                            ? loadingProgress
-                                                                      .cumulativeBytesLoaded /
-                                                                  loadingProgress
-                                                                      .expectedTotalBytes!
-                                                            : null,
-                                                        color: const Color(
-                                                          0xFF00FF88,
-                                                        ),
-                                                      ),
-                                                    );
-                                                  },
-                                                  errorBuilder:
-                                                      (
-                                                        context,
-                                                        error,
-                                                        stackTrace,
-                                                      ) => const Center(
-                                                        child: Icon(
-                                                          Icons.broken_image,
-                                                          color: Colors.grey,
-                                                          size: 40,
-                                                        ),
-                                                      ),
-                                                ))
-                                        : const Center(
-                                            child: Icon(
-                                              Icons.image_not_supported,
-                                              color: Colors.grey,
-                                              size: 40,
-                                            ),
-                                          ),
+                                    child: Container(
+                                      color: Colors.white,
+                                      padding: const EdgeInsets.all(12),
+                                      child: _buildItemPreview(item),
+                                    ),
                                   ),
                                 ),
                                 Padding(
