@@ -2,7 +2,7 @@ import 'dart:io';
 import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
-import 'package:flutter_svg/flutter_svg.dart';
+import 'package:flutter_svg/flutter_svg.dart' as svg;
 import 'package:flutter/material.dart';
 import '../../services/api_service.dart';
 import '../../services/svg_renderer.dart';
@@ -29,8 +29,8 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   final CutterBluetoothService _bluetooth = CutterBluetoothService();
   final CutSettingsService _cutSettings = CutSettingsService();
 
-  final int _defaultSpeed = 15;
-  final int _defaultPressure = 10;
+  int _defaultSpeed = 15;
+  int _defaultPressure = 10;
   bool _autoFeed = true;
   bool _angleEnabled = false;
   double _angleValue = 0;
@@ -55,11 +55,15 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   }
 
   Future<void> _loadCutSettings() async {
+    final speed = await _cutSettings.getSpeed();
+    final pressure = await _cutSettings.getPressure();
     final autoFeed = await _cutSettings.getAutoFeed();
     final angleEnabled = await _cutSettings.getAngleEnabled();
     final angleValue = await _cutSettings.getAngleValue();
     if (!mounted) return;
     setState(() {
+      _defaultSpeed = speed;
+      _defaultPressure = pressure;
       _autoFeed = autoFeed;
       _angleEnabled = angleEnabled;
       _angleValue = angleValue;
@@ -74,11 +78,10 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       _previewFailed = false;
     });
 
-    String? serial = _bluetooth.serialNumber;
-    bool isDQ = serial != null && serial.toUpperCase().startsWith("DQ");
+    final isPltMachine = _usesPltFormat();
 
     String url;
-    if (isDQ) {
+    if (isPltMachine) {
       url = widget.productItem!.pltUrl.isNotEmpty
           ? widget.productItem!.pltUrl
           : widget.productItem!.sjcUrl;
@@ -130,9 +133,11 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     });
   }
 
-  bool _isDQMachine() {
-    final serial = _bluetooth.serialNumber;
-    return serial != null && serial.toUpperCase().startsWith("DQ");
+  bool _usesPltFormat() {
+    final serial = _bluetooth.serialNumber?.toUpperCase() ?? '';
+    return serial.startsWith("DQ") ||
+        serial.startsWith("DX") ||
+        serial.startsWith("LH");
   }
 
   Future<void> _sendSpeedCommand(int level) async {
@@ -227,7 +232,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         }
         final file = snapshot.data;
         if (file == null) {
-          return SvgPicture.network(
+          return svg.SvgPicture.network(
             url,
             fit: BoxFit.contain,
             width: double.infinity,
@@ -297,26 +302,56 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
           );
         }
 
-        return FutureBuilder<String>(
-          future: file.readAsString(),
+        return FutureBuilder<Uint8List>(
+          future: file.readAsBytes(),
           builder: (context, svgSnap) {
             if (svgSnap.connectionState == ConnectionState.waiting) {
               return const Center(
                 child: CircularProgressIndicator(color: Color(0xFF00FF88)),
               );
             }
-            final svg = svgSnap.data;
-            if (svg == null || svg.isEmpty) {
+            final bytes = svgSnap.data;
+            if (bytes == null || bytes.isEmpty) {
               return const Center(
                 child: Icon(Icons.broken_image, color: Colors.grey, size: 50),
               );
             }
-            final outlineSvg = _toOutlineSvg(svg);
-            return SvgPicture.string(
+            final svgText = decodeSvgBytes(bytes);
+            if (svgText.isEmpty) {
+              return const Center(
+                child: Icon(Icons.broken_image, color: Colors.grey, size: 50),
+              );
+            }
+            final outlineSvg = Platform.isIOS
+                ? toOutlineSvgHeavy(svgText)
+                : _toOutlineSvg(svgText);
+            return svg.SvgPicture.string(
               outlineSvg,
               fit: BoxFit.contain,
               width: double.infinity,
               height: double.infinity,
+              allowDrawingOutsideViewBox: true,
+              clipBehavior: Clip.none,
+              errorBuilder: (context, error, stackTrace) {
+                final fallbackSvg = Platform.isIOS
+                    ? toOutlineSvgLight(svgText)
+                    : _toOutlineSvg(svgText);
+                return svg.SvgPicture.string(
+                  fallbackSvg,
+                  fit: BoxFit.contain,
+                  width: double.infinity,
+                  height: double.infinity,
+                  allowDrawingOutsideViewBox: true,
+                  clipBehavior: Clip.none,
+                  errorBuilder: (c, e, s) => const Center(
+                    child: Icon(
+                      Icons.broken_image,
+                      color: Colors.grey,
+                      size: 50,
+                    ),
+                  ),
+                );
+              },
             );
           },
         );
@@ -379,12 +414,11 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       _status = AppStrings.of(context, 'status_downloading');
     });
 
-    // Logic: Try PLT for DQ machines, SJC for others.
-    String? serial = _bluetooth.serialNumber;
-    bool isDQ = serial != null && serial.toUpperCase().startsWith("DQ");
+    // Logic: Try PLT for DQ/DX/LH machines, SJC for others.
+    final isPltMachine = _usesPltFormat();
 
     String url;
-    if (isDQ) {
+    if (isPltMachine) {
       url = widget.productItem!.pltUrl.isNotEmpty
           ? widget.productItem!.pltUrl
           : widget.productItem!.sjcUrl;
@@ -482,24 +516,26 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       await Future.delayed(const Duration(milliseconds: 2000));
       if (!mounted) return;
 
-      // 3. Set Params (disabled per user request)
+      // 3. Set Params (speed/pressure)
+      await _bluetooth.write("BD:4,$_defaultSpeed;");
+      await _bluetooth.write("BD:3,$_defaultPressure;");
+      await Future.delayed(const Duration(milliseconds: 200));
 
       // 4. Send File Data
       setState(() => _status = AppStrings.of(context, 'status_sending_data'));
 
       // Determine machine type from serial
-      String? serial = _bluetooth.serialNumber;
-      bool isDQ = serial != null && serial.toUpperCase().startsWith("DQ");
+      final isPltMachine = _usesPltFormat();
 
       List<int> bytesToSend;
 
-      if (isDQ) {
-        // DQ Machines: Original Java code sends RAW bytes.
+      if (isPltMachine) {
+        // DQ/DX/LH Machines: Original Java code sends RAW bytes.
         // We suspect previous "Wrong Cutting" was due to Packet Loss (missing digits).
         // We are sending RAW bytes now with improved Bluetooth reliability.
         bytesToSend = await _cutFile!.readAsBytes();
         print(
-          "DQ Machine detected ($serial). Sending RAW bytes (Java behavior).",
+          "PLT machine detected. Sending RAW bytes (Java behavior).",
         );
       } else {
         // Standard Machines: Read bytes directly (User confirmed SRC/SJC file for Sunshine New)

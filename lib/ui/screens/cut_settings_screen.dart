@@ -59,6 +59,8 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
   final CutterBluetoothService _bluetooth = CutterBluetoothService();
 
   bool _loading = true;
+  int _speed = CutSettingsService.defaultSpeed;
+  int _pressure = CutSettingsService.defaultPressure;
   bool _autoFeed = CutSettingsService.defaultAutoFeed;
   bool _angleEnabled = CutSettingsService.defaultAngleEnabled;
   double _angleValue = CutSettingsService.defaultAngleValue;
@@ -70,16 +72,63 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
   }
 
   Future<void> _load() async {
+    final speed = await _settings.getSpeed();
+    final pressure = await _settings.getPressure();
     final autoFeed = await _settings.getAutoFeed();
     final angleEnabled = await _settings.getAngleEnabled();
     final angleValue = await _settings.getAngleValue();
     if (!mounted) return;
     setState(() {
+      _speed = speed;
+      _pressure = pressure;
       _autoFeed = autoFeed;
       _angleEnabled = angleEnabled;
       _angleValue = angleValue;
       _loading = false;
     });
+  }
+
+  Future<void> _saveSpeed(int value) async {
+    setState(() => _speed = value);
+    await _settings.setSpeed(value);
+  }
+
+  Future<void> _savePressure(int value) async {
+    setState(() => _pressure = value);
+    await _settings.setPressure(value);
+  }
+
+  Widget _buildStepper({
+    required String label,
+    required int value,
+    required int min,
+    required int max,
+    required ValueChanged<int> onChanged,
+  }) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.grey, fontSize: 14)),
+        Row(
+          children: [
+            IconButton(
+              onPressed: value > min ? () => onChanged(value - 1) : null,
+              icon: const Icon(Icons.remove_circle_outline),
+              color: const Color(0xFF00FF88),
+            ),
+            Text(
+              value.toString(),
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+            ),
+            IconButton(
+              onPressed: value < max ? () => onChanged(value + 1) : null,
+              icon: const Icon(Icons.add_circle_outline),
+              color: const Color(0xFF00FF88),
+            ),
+          ],
+        ),
+      ],
+    );
   }
 
   Future<void> _saveAutoFeed(bool value) async {
@@ -155,6 +204,22 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  _buildStepper(
+                    label: 'Speed',
+                    value: _speed,
+                    min: 1,
+                    max: 30,
+                    onChanged: _saveSpeed,
+                  ),
+                  const SizedBox(height: 20),
+                  _buildStepper(
+                    label: 'Pressure',
+                    value: _pressure,
+                    min: 1,
+                    max: 30,
+                    onChanged: _savePressure,
+                  ),
+                  const SizedBox(height: 20),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [

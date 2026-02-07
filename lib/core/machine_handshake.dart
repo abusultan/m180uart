@@ -52,6 +52,18 @@ class MachineHandshake {
     if (forcedAlgorithm != null) _manualLockApplied = true;
   }
 
+  bool _isPltSerial(String? serial) {
+    final s = serial?.toUpperCase();
+    if (s == null) return false;
+    return s.startsWith("DQ") || s.startsWith("DX") || s.startsWith("LH");
+  }
+
+  bool _isPrioritySerial(String? serial) {
+    final s = serial?.toUpperCase();
+    if (s == null) return false;
+    return s.startsWith("SS") || _isPltSerial(s);
+  }
+
   bool get isAuthenticated => _isAuthenticated;
 
   void startHandshake() {
@@ -224,13 +236,8 @@ class MachineHandshake {
         message.contains("RPID=")) {
       String rawSerial = message.split("=")[1].split(";")[0].trim();
       if (rawSerial.isNotEmpty) {
-        bool newIsPriority =
-            rawSerial.toUpperCase().startsWith("SS") ||
-            rawSerial.toUpperCase().startsWith("DQ");
-        bool oldIsPriority =
-            _detectedSerial != null &&
-            (_detectedSerial!.toUpperCase().startsWith("SS") ||
-                _detectedSerial!.toUpperCase().startsWith("DQ"));
+        bool newIsPriority = _isPrioritySerial(rawSerial);
+        bool oldIsPriority = _isPrioritySerial(_detectedSerial);
 
         // Decision logic to update serial:
         // - Always update if we have nothing.
@@ -258,22 +265,22 @@ class MachineHandshake {
             _applyManualPreferenceIfAny(rawSerial);
           }
 
-          // Fast-track DQ/SS4070 if identified
-          if (rawSerial.toUpperCase().startsWith("DQ")) {
+          // Fast-track DQ/DX/LH if identified
+          if (_isPltSerial(rawSerial)) {
             if (!_bd10Sent && !_isAuthenticated) {
               _triggerDQProtocol();
             }
           }
         }
       }
-    } else if ((message.startsWith("SS") || message.startsWith("DQ")) &&
+    } else if ((message.startsWith("SS") ||
+            message.startsWith("DQ") ||
+            message.startsWith("DX") ||
+            message.startsWith("LH")) &&
         !message.contains("=")) {
       String rawSerial = message.replaceAll(";", "").trim();
       if (rawSerial.isNotEmpty) {
-        bool oldIsPriority =
-            _detectedSerial != null &&
-            (_detectedSerial!.toUpperCase().startsWith("SS") ||
-                _detectedSerial!.toUpperCase().startsWith("DQ"));
+        bool oldIsPriority = _isPrioritySerial(_detectedSerial);
 
         // Bare SS/DQ is always considered priority
         if (_detectedSerial == null || !oldIsPriority) {
@@ -285,7 +292,7 @@ class MachineHandshake {
             _applyManualPreferenceIfAny(rawSerial);
           }
 
-          if (rawSerial.toUpperCase().startsWith("DQ")) {
+          if (_isPltSerial(rawSerial)) {
             if (!_bd10Sent && !_isAuthenticated) {
               _triggerDQProtocol();
             }
@@ -373,7 +380,7 @@ class MachineHandshake {
       Future.delayed(const Duration(milliseconds: 500), () {
         if (_bluetooth.isConnected) {
           // If we already know it's a DQ, re-trigger DQ protocol
-          if (_detectedSerial?.toUpperCase().startsWith("DQ") == true) {
+          if (_isPltSerial(_detectedSerial)) {
             _triggerDQProtocol();
           } else {
             _sendBD9();

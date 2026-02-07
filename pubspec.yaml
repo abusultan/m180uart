@@ -43,6 +43,7 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   flutter_svg: ^2.2.3
+  xml: ^6.5.0
 
 dev_dependencies:
   flutter_test:

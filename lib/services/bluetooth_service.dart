@@ -49,8 +49,12 @@ class CutterBluetoothService {
   Future<void> _persistLastMachineType(String serial) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final isDQ = serial.toUpperCase().startsWith("DQ");
-      await prefs.setBool('last_machine_is_dq', isDQ);
+      final upper = serial.toUpperCase();
+      final isPlt =
+          upper.startsWith("DQ") ||
+          upper.startsWith("DX") ||
+          upper.startsWith("LH");
+      await prefs.setBool('last_machine_is_dq', isPlt);
     } catch (e) {
       print("Error persisting machine type: $e");
     }

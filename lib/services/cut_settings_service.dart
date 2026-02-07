@@ -6,20 +6,24 @@ class CutSettingsService {
   static const _keyAutoFeed = 'cut_auto_feed';
   static const _keyAngleEnabled = 'cut_angle_enabled';
   static const _keyAngleValue = 'cut_angle_value';
+  static const _keySettingsVersion = 'cut_settings_version';
+  static const int _resetVersion = 2;
 
-  static const int defaultSpeed = 15;
-  static const int defaultPressure = 10;
+  static const int defaultSpeed = 1;
+  static const int defaultPressure = 3;
   static const bool defaultAutoFeed = true;
   static const bool defaultAngleEnabled = false;
   static const double defaultAngleValue = 0;
 
   Future<int> getSpeed() async {
     final prefs = await SharedPreferences.getInstance();
+    await _ensureResetApplied(prefs);
     return prefs.getInt(_keySpeed) ?? defaultSpeed;
   }
 
   Future<int> getPressure() async {
     final prefs = await SharedPreferences.getInstance();
+    await _ensureResetApplied(prefs);
     return prefs.getInt(_keyPressure) ?? defaultPressure;
   }
 
@@ -36,6 +40,15 @@ class CutSettingsService {
   Future<double> getAngleValue() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getDouble(_keyAngleValue) ?? defaultAngleValue;
+  }
+
+  Future<void> _ensureResetApplied(SharedPreferences prefs) async {
+    final version = prefs.getInt(_keySettingsVersion) ?? 0;
+    if (version < _resetVersion) {
+      await prefs.remove(_keySpeed);
+      await prefs.remove(_keyPressure);
+      await prefs.setInt(_keySettingsVersion, _resetVersion);
+    }
   }
 
 

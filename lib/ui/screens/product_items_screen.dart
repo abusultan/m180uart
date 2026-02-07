@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import '../../services/api_service.dart';
@@ -7,7 +8,8 @@ import 'device_detail_screen.dart';
 import '../../core/cut_file_transformer.dart';
 import '../../utils/svg_outline.dart';
 import '../../services/svg_renderer.dart';
-import 'package:flutter_svg/flutter_svg.dart';
+import '../../services/bluetooth_service.dart';
+import 'package:flutter_svg/flutter_svg.dart' as svg;
 
 class ProductItemsScreen extends StatefulWidget {
   final Product product;
@@ -25,11 +27,64 @@ class _ProductItemsScreenState extends State<ProductItemsScreen> {
   String _errorMessage = '';
   String _selectedFilter = 'All';
   final Map<int, Future<CutPathData?>> _cutPreviewCache = {};
+  bool? _isPltMachine;
+  final CutterBluetoothService _bluetooth = CutterBluetoothService();
+  StreamSubscription<String?>? _serialSub;
 
   @override
   void initState() {
     super.initState();
+    _serialSub = _bluetooth.serialStream.listen((serial) {
+      if (serial != null && serial.isNotEmpty) {
+        _isPltMachine = _isPltSerial(serial);
+        if (mounted) {
+          setState(() {});
+          _applyFilter();
+        }
+      }
+    });
+    _loadMachineType();
     _loadItems();
+  }
+
+  @override
+  void dispose() {
+    _serialSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadMachineType() async {
+    // If not connected yet, show all items (no filter).
+    if (_bluetooth.connectedDevice == null) {
+      _isPltMachine = null;
+    } else {
+      final serial = _bluetooth.serialNumber;
+      if (serial != null && serial.isNotEmpty) {
+        _isPltMachine = _isPltSerial(serial);
+      } else {
+        _isPltMachine = await _bluetooth.getLastMachineIsDQ();
+      }
+    }
+    if (mounted) {
+      setState(() {});
+      _applyFilter();
+    }
+  }
+
+  bool _isPltSerial(String serial) {
+    final s = serial.toUpperCase();
+    return s.startsWith("DQ") || s.startsWith("DX") || s.startsWith("LH");
+  }
+
+  bool _matchesMachineFormat(ProductItem item) {
+    if (_isPltMachine == null) return true;
+    final isSvgPreview = item.imageUrl.toLowerCase().contains('.svg');
+    if (_isPltMachine == true) {
+      // Server convention: SVG preview = PLT
+      return isSvgPreview;
+    }
+    // Non-SVG previews treated as SJC
+    return !isSvgPreview;
   }
 
   Future<void> _loadItems() async {
@@ -58,16 +113,17 @@ class _ProductItemsScreenState extends State<ProductItemsScreen> {
 
   void _applyFilter() {
     setState(() {
+      final machineFiltered = _allItems.where(_matchesMachineFormat).toList();
       if (_selectedFilter == 'All') {
-        _filteredItems = List.from(_allItems);
+        _filteredItems = List.from(machineFiltered);
       } else if (_selectedFilter == 'Front') {
-        _filteredItems = _allItems.where((item) {
+        _filteredItems = machineFiltered.where((item) {
           final name = item.nameEn.toLowerCase();
           return name.contains('front');
         }).toList();
       } else {
         // Back: Contains 'back' or does NOT contain 'front'
-        _filteredItems = _allItems.where((item) {
+        _filteredItems = machineFiltered.where((item) {
           final name = item.nameEn.toLowerCase();
           return name.contains('back') || !name.contains('front');
         }).toList();
@@ -88,9 +144,16 @@ class _ProductItemsScreenState extends State<ProductItemsScreen> {
   Future<CutPathData?> _loadCutPreview(ProductItem item) {
     return _cutPreviewCache.putIfAbsent(item.id, () async {
       final urls = <String>[];
-      if (item.pltUrl.isNotEmpty) urls.add(item.pltUrl);
-      if (item.sjcUrl.isNotEmpty && item.sjcUrl != item.pltUrl) {
-        urls.add(item.sjcUrl);
+      if (_isPltMachine == true) {
+        if (item.pltUrl.isNotEmpty) urls.add(item.pltUrl);
+        if (item.sjcUrl.isNotEmpty && item.sjcUrl != item.pltUrl) {
+          urls.add(item.sjcUrl);
+        }
+      } else {
+        if (item.sjcUrl.isNotEmpty) urls.add(item.sjcUrl);
+        if (item.pltUrl.isNotEmpty && item.pltUrl != item.sjcUrl) {
+          urls.add(item.pltUrl);
+        }
       }
       for (final url in urls) {
         final file = await ApiService().downloadFile(url);
@@ -225,26 +288,50 @@ class _ProductItemsScreenState extends State<ProductItemsScreen> {
           );
         }
 
-        return FutureBuilder<String>(
-          future: file.readAsString(),
+        return FutureBuilder<Uint8List>(
+          future: file.readAsBytes(),
           builder: (context, svgSnap) {
             if (svgSnap.connectionState == ConnectionState.waiting) {
               return const Center(
                 child: CircularProgressIndicator(color: Color(0xFF00FF88)),
               );
             }
-            final svg = svgSnap.data;
-            if (svg == null || svg.isEmpty) {
+            final bytes = svgSnap.data;
+            if (bytes == null || bytes.isEmpty) {
               return const Center(
                 child: Icon(Icons.broken_image, color: Colors.grey, size: 40),
               );
             }
-            final outlineSvg = toOutlineSvg(svg);
-            return SvgPicture.string(
+            final svgText = decodeSvgBytes(bytes);
+            if (svgText.isEmpty) {
+              return const Center(
+                child: Icon(Icons.broken_image, color: Colors.grey, size: 40),
+              );
+            }
+            final outlineSvg = Platform.isIOS
+                ? toOutlineSvgHeavy(svgText)
+                : toOutlineSvg(svgText);
+            return svg.SvgPicture.string(
               outlineSvg,
               width: double.infinity,
               height: double.infinity,
               fit: BoxFit.contain,
+              allowDrawingOutsideViewBox: true,
+              clipBehavior: Clip.none,
+              errorBuilder: (context, error, stackTrace) {
+                final fallbackSvg = Platform.isIOS
+                    ? toOutlineSvgLight(svgText)
+                    : toOutlineSvg(svgText);
+                return svg.SvgPicture.string(
+                  fallbackSvg,
+                  width: double.infinity,
+                  height: double.infinity,
+                  fit: BoxFit.contain,
+                  allowDrawingOutsideViewBox: true,
+                  clipBehavior: Clip.none,
+                  errorBuilder: (c, e, s) => _buildCutPreviewFallback(item),
+                );
+              },
             );
           },
         );
