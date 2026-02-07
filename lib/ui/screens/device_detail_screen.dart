@@ -550,19 +550,38 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         );
       }
 
-      int chunkSize = 2048;
-      int offset = 0;
+      if (isPltMachine) {
+        // DQ/DX/LH: slower, acknowledged sends to avoid buffer overflow on large files
+        const int blockSize = 1024;
+        int offset = 0;
+        while (offset < bytesToSend.length) {
+          if (!mounted) return;
+          int end = offset + blockSize;
+          if (end > bytesToSend.length) end = bytesToSend.length;
+          final chunk = bytesToSend.sublist(offset, end);
+          await _bluetooth.writeBytes(
+            chunk,
+            forceWithResponse: true,
+            chunkSize: 20,
+            packetDelayMs: 60,
+          );
+          await Future.delayed(const Duration(milliseconds: 200));
+          offset = end;
+        }
+      } else {
+        int chunkSize = 2048;
+        int offset = 0;
+        while (offset < bytesToSend.length) {
+          if (!mounted) return; // Check cancel
+          int end = offset + chunkSize;
+          if (end > bytesToSend.length) end = bytesToSend.length;
+          List<int> chunk = bytesToSend.sublist(offset, end);
 
-      while (offset < bytesToSend.length) {
-        if (!mounted) return; // Check cancel
-        int end = offset + chunkSize;
-        if (end > bytesToSend.length) end = bytesToSend.length;
-        List<int> chunk = bytesToSend.sublist(offset, end);
-
-        await _bluetooth.writeBytes(chunk);
-        // BluetoothService already has a small delay, but we add a bit more for large file safety tasks
-        await Future.delayed(const Duration(milliseconds: 50));
-        offset += chunkSize;
+          await _bluetooth.writeBytes(chunk);
+          // BluetoothService already has a small delay, but we add a bit more for large file safety tasks
+          await Future.delayed(const Duration(milliseconds: 50));
+          offset += chunkSize;
+        }
       }
 
       // 5. Start Cut Command
