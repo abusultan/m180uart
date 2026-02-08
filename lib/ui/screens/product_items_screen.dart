@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import '../../services/api_service.dart';
+import '../../services/bluetooth_service.dart';
 import '../../data/models/product_models.dart';
 import 'device_detail_screen.dart';
 import '../../core/cut_file_transformer.dart';
@@ -93,7 +94,27 @@ class _ProductItemsScreenState extends State<ProductItemsScreen> {
       _errorMessage = '';
     });
     try {
-      final items = await ApiService().getProductItems(widget.product.id);
+      var items = await ApiService().getProductItems(widget.product.id);
+
+      // Filter based on Connected Device Serial
+      final serial = CutterBluetoothService().serialNumber;
+      // Check for DQ (case-insensitive)
+      final isDQ = serial != null && serial.toUpperCase().startsWith('DQ');
+
+      items = items.where((item) {
+        if (isDQ) {
+          // DQ Machines: Only return items with valid .plt files
+          // Must end in .plt to avoid garbage URLs
+          return item.pltUrl.isNotEmpty &&
+              item.pltUrl.toLowerCase().endsWith('.plt');
+        } else {
+          // Non-DQ Machines: Only return items with valid .sjc files
+          // Must end in .sjc (blocks garbage URLs like .../storage)
+          return item.sjcUrl.isNotEmpty &&
+              item.sjcUrl.toLowerCase().endsWith('.sjc');
+        }
+      }).toList();
+
       if (mounted) {
         setState(() {
           _allItems = items;

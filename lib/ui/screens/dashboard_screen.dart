@@ -6,6 +6,8 @@ import '../../core/app_strings.dart';
 import 'product_list_screen.dart';
 import 'login_screen.dart';
 import 'scan_screen.dart';
+import 'product_items_screen.dart';
+import 'dart:async';
 
 class DashboardScreen extends StatefulWidget {
   final List<Category>? initialSubCategories;
@@ -26,6 +28,9 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   late Future<List<Category>> _categoriesFuture;
   String _searchQuery = '';
+  List<Product> _productSearchResults = [];
+  bool _isSearchingProducts = false;
+  Timer? _debounce;
 
   @override
   void initState() {
@@ -35,6 +40,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
     } else {
       _categoriesFuture = ApiService().getCategories();
     }
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  void _onSearchChanged(String query) {
+    setState(() {
+      _searchQuery = query;
+    });
+
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+
+    if (query.isEmpty) {
+      setState(() {
+        _productSearchResults = [];
+        _isSearchingProducts = false;
+      });
+      return;
+    }
+
+    _debounce = Timer(const Duration(milliseconds: 500), () async {
+      setState(() {
+        _isSearchingProducts = true;
+      });
+
+      try {
+        final products = await ApiService().searchAllProducts(query);
+        if (mounted) {
+          setState(() {
+            _productSearchResults = products;
+            _isSearchingProducts = false;
+          });
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _isSearchingProducts = false;
+            // Optionally handle error
+          });
+        }
+      }
+    });
   }
 
   void _logout() {
@@ -181,247 +231,465 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ],
       ),
       backgroundColor: const Color(0xFF121212),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: TextField(
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                hintText: "Search ${widget.title ?? 'Categories'}...",
-                hintStyle: const TextStyle(color: Colors.grey),
-                prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                filled: true,
-                fillColor: const Color(0xFF1E1E1E),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
+      body: !isConnected
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.bluetooth_disabled,
+                      size: 80,
+                      color: Colors.white54,
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      AppStrings.of(context, 'connect_required_title'),
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      AppStrings.of(context, 'connect_required_msg'),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        color: Colors.white70,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 32),
+                    ElevatedButton.icon(
+                      onPressed: () async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const ScanScreen(),
+                          ),
+                        );
+                        setState(() {});
+                      },
+                      icon: const Icon(Icons.bluetooth),
+                      label: Text(AppStrings.of(context, 'go_to_connect')),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF00FF88),
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 12,
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
               ),
-              onChanged: (value) {
-                setState(() {
-                  _searchQuery = value;
-                });
-              },
-            ),
-          ),
-          Expanded(
-            child: RefreshIndicator(
-              color: const Color(0xFF00FF88),
-              onRefresh: () async {
-                // Update User Info
-                await ApiService().getUserInfo().then((_) {
-                  if (mounted) setState(() {});
-                });
-
-                setState(() {
-                  _searchQuery = ''; // Clear search on refresh
-                  if (widget.currentCategoryId != null) {
-                    // Sub-category refreshing: fetch all, find current, show children
-                    _categoriesFuture = ApiService().getCategories().then((
-                      all,
-                    ) {
-                      final children = _findChildren(
-                        all,
-                        widget.currentCategoryId!,
-                      );
-                      return children ?? [];
-                    });
-                  } else {
-                    // Root refreshing
-                    _categoriesFuture = ApiService().getCategories();
-                  }
-                });
-                await _categoriesFuture;
-              },
-              child: FutureBuilder<List<Category>>(
-                future: _categoriesFuture,
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(
-                      child: CircularProgressIndicator(
-                        color: Color(0xFF00FF88),
+            )
+          : Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: TextField(
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      hintText: AppStrings.of(context, 'search_hint'),
+                      hintStyle: const TextStyle(color: Colors.grey),
+                      prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                      filled: true,
+                      fillColor: const Color(0xFF1E1E1E),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
                       ),
-                    );
-                  }
-
-                  if (snapshot.hasError) {
-                    // Wrap in centered scrollable to make refresh work even on error
-                    return Center(
-                      child: SingleChildScrollView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        child: Text(
-                          "Error: ${snapshot.error}",
-                          style: const TextStyle(color: Colors.red),
-                        ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
                       ),
-                    );
-                  }
+                    ),
+                    onChanged: _onSearchChanged,
+                  ),
+                ),
+                Expanded(
+                  child: _searchQuery.isNotEmpty
+                      ? _buildSearchResults(context)
+                      : RefreshIndicator(
+                          color: const Color(0xFF00FF88),
+                          onRefresh: () async {
+                            // Update User Info
+                            await ApiService().getUserInfo().then((_) {
+                              if (mounted) setState(() {});
+                            });
 
-                  if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                    // Wrap in centered scrollable to make refresh work even on empty
-                    return Center(
-                      child: SingleChildScrollView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        child: Container(
-                          padding: const EdgeInsets.all(20),
-                          child: Text(
-                            AppStrings.of(context, 'no_categories'),
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                        ),
-                      ),
-                    );
-                  }
-
-                  final allCategories = snapshot.data!;
-                  final categories = _searchQuery.isEmpty
-                      ? allCategories
-                      : allCategories
-                            .where(
-                              (cat) => cat.name.toLowerCase().contains(
-                                _searchQuery.toLowerCase(),
-                              ),
-                            )
-                            .toList();
-
-                  if (categories.isEmpty) {
-                    return Center(
-                      child: SingleChildScrollView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        child: Container(
-                          padding: const EdgeInsets.all(20),
-                          child: const Text(
-                            "No matching categories found",
-                            style: TextStyle(color: Colors.white),
-                          ),
-                        ),
-                      ),
-                    );
-                  }
-
-                  return GridView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          crossAxisSpacing: 12,
-                          mainAxisSpacing: 12,
-                          childAspectRatio: 1.0, // More square-like, compact
-                        ),
-                    itemCount: categories.length,
-                    itemBuilder: (context, index) {
-                      final cat = categories[index];
-                      return GestureDetector(
-                        onTap: () => _handleCategoryTap(cat),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1E1E1E),
-                            borderRadius: BorderRadius.circular(16),
-                            // Subtle gradient for premium feel
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [
-                                const Color(0xFF252525),
-                                const Color(0xFF1A1A1A),
-                              ],
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.3),
-                                blurRadius: 8,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
-                            border: Border.all(
-                              color: Colors.white.withOpacity(0.05),
-                            ),
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              // Category Image or Icon - Smaller & Neater
-                              if (cat.imageUrl.isNotEmpty)
-                                Container(
-                                  height: 70, // Fixed reduced height
-                                  width: 70,
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(16),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.1),
-                                        blurRadius: 4,
-                                        offset: const Offset(0, 2),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Image.network(
-                                    cat.imageUrl,
-                                    fit: BoxFit.contain,
-                                    errorBuilder: (context, error, stackTrace) {
-                                      return Icon(
-                                        cat.children.isNotEmpty
-                                            ? Icons.folder_open
-                                            : Icons.smartphone,
-                                        size: 30,
-                                        color: Colors.grey,
+                            setState(() {
+                              _searchQuery = ''; // Clear search on refresh
+                              if (widget.currentCategoryId != null) {
+                                // Sub-category refreshing
+                                _categoriesFuture = ApiService()
+                                    .getCategories()
+                                    .then((all) {
+                                      final children = _findChildren(
+                                        all,
+                                        widget.currentCategoryId!,
                                       );
-                                    },
+                                      return children ?? [];
+                                    });
+                              } else {
+                                // Root refreshing
+                                _categoriesFuture = ApiService()
+                                    .getCategories();
+                              }
+                            });
+                            await _categoriesFuture;
+                          },
+                          child: FutureBuilder<List<Category>>(
+                            future: _categoriesFuture,
+                            builder: (context, snapshot) {
+                              if (snapshot.connectionState ==
+                                  ConnectionState.waiting) {
+                                return const Center(
+                                  child: CircularProgressIndicator(
+                                    color: Color(0xFF00FF88),
                                   ),
-                                )
-                              else
-                                Container(
-                                  height: 70,
-                                  width: 70,
-                                  decoration: BoxDecoration(
-                                    color: const Color(
-                                      0xFF00FF88,
-                                    ).withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(16),
+                                );
+                              }
+
+                              if (snapshot.hasError) {
+                                return Center(
+                                  child: SingleChildScrollView(
+                                    physics:
+                                        const AlwaysScrollableScrollPhysics(),
+                                    child: Text(
+                                      "Error: ${snapshot.error}",
+                                      style: const TextStyle(color: Colors.red),
+                                    ),
                                   ),
-                                  child: Icon(
-                                    cat.children.isNotEmpty
-                                        ? Icons.folder_open
-                                        : Icons.smartphone,
-                                    size: 32,
-                                    color: const Color(0xFF00FF88),
+                                );
+                              }
+
+                              if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                                return Center(
+                                  child: SingleChildScrollView(
+                                    physics:
+                                        const AlwaysScrollableScrollPhysics(),
+                                    child: Container(
+                                      padding: const EdgeInsets.all(20),
+                                      child: Text(
+                                        AppStrings.of(context, 'no_categories'),
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
                                   ),
+                                );
+                              }
+
+                              // Filter categories based on _searchQuery if it's not empty
+                              final filteredCategories = snapshot.data!
+                                  .where(
+                                    (cat) => cat.name.toLowerCase().contains(
+                                      _searchQuery.toLowerCase(),
+                                    ),
+                                  )
+                                  .toList();
+
+                              if (filteredCategories.isEmpty &&
+                                  _searchQuery.isNotEmpty) {
+                                return Center(
+                                  child: SingleChildScrollView(
+                                    physics:
+                                        const AlwaysScrollableScrollPhysics(),
+                                    child: Container(
+                                      padding: const EdgeInsets.all(20),
+                                      child: const Text(
+                                        "No matching categories found",
+                                        style: TextStyle(color: Colors.white),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }
+
+                              return GridView.builder(
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  0,
+                                  16,
+                                  16,
                                 ),
-                              const SizedBox(height: 12),
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12.0,
-                                ),
-                                child: Text(
-                                  cat.name,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                    height: 1.2,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ],
+                                physics: const AlwaysScrollableScrollPhysics(),
+                                gridDelegate:
+                                    const SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: 2,
+                                      crossAxisSpacing: 12,
+                                      mainAxisSpacing: 12,
+                                      childAspectRatio: 1.0,
+                                    ),
+                                itemCount: filteredCategories.length,
+                                itemBuilder: (context, index) {
+                                  final cat = filteredCategories[index];
+                                  return _buildCategoryCard(cat);
+                                },
+                              );
+                            },
                           ),
                         ),
-                      );
-                    },
-                  );
-                },
+                ),
+              ],
+            ),
+    );
+  }
+
+  Widget _buildCategoryCard(Category cat) {
+    return GestureDetector(
+      onTap: () => _handleCategoryTap(cat),
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E1E1E),
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [const Color(0xFF252525), const Color(0xFF1A1A1A)],
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+          border: Border.all(color: Colors.white.withOpacity(0.05)),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (cat.imageUrl.isNotEmpty)
+              Container(
+                height: 70,
+                width: 70,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Image.network(
+                  cat.imageUrl,
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Icon(
+                      cat.children.isNotEmpty
+                          ? Icons.folder_open
+                          : Icons.smartphone,
+                      size: 30,
+                      color: Colors.grey,
+                    );
+                  },
+                ),
+              )
+            else
+              Container(
+                height: 70,
+                width: 70,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF00FF88).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(
+                  cat.children.isNotEmpty
+                      ? Icons.folder_open
+                      : Icons.smartphone,
+                  size: 32,
+                  color: const Color(0xFF00FF88),
+                ),
+              ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12.0),
+              child: Text(
+                cat.name,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  height: 1.2,
+                ),
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
+    );
+  }
+
+  Widget _buildSearchResults(BuildContext context) {
+    return FutureBuilder<List<Category>>(
+      future: _categoriesFuture,
+      builder: (context, snapshot) {
+        final List<Category> matchingCategories = [];
+        if (snapshot.hasData) {
+          matchingCategories.addAll(
+            snapshot.data!.where(
+              (cat) =>
+                  cat.name.toLowerCase().contains(_searchQuery.toLowerCase()),
+            ),
+          );
+        }
+
+        return CustomScrollView(
+          slivers: [
+            if (matchingCategories.isNotEmpty) ...[
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: Text(
+                    "Matching Categories",
+                    style: TextStyle(
+                      color: Color(0xFF00FF88),
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                sliver: SliverGrid(
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
+                    childAspectRatio: 1.0,
+                  ),
+                  delegate: SliverChildBuilderDelegate((context, index) {
+                    return _buildCategoryCard(matchingCategories[index]);
+                  }, childCount: matchingCategories.length),
+                ),
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: 24)),
+            ],
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Text(
+                  "Matching Products",
+                  style: TextStyle(
+                    color: Color(0xFF00FF88),
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+            if (_isSearchingProducts)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.all(20.0),
+                  child: Center(
+                    child: CircularProgressIndicator(color: Color(0xFF00FF88)),
+                  ),
+                ),
+              )
+            else if (_productSearchResults.isEmpty)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.all(20.0),
+                  child: Text(
+                    "No products found",
+                    style: TextStyle(
+                      color: Colors.grey,
+                      fontStyle: FontStyle.italic,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              )
+            else
+              SliverList(
+                delegate: SliverChildBuilderDelegate((context, index) {
+                  final product = _productSearchResults[index];
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 4,
+                    ),
+                    child: Card(
+                      color: const Color(0xFF1E1E1E),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: ListTile(
+                        leading: Container(
+                          width: 50,
+                          height: 50,
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Image.network(
+                            product.image,
+                            fit: BoxFit.contain,
+                            errorBuilder: (c, e, s) => const Icon(
+                              Icons.smartphone,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ),
+                        title: Text(
+                          product.nameEn.isNotEmpty
+                              ? product.nameEn
+                              : product.nameAr,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        subtitle: Text(
+                          // Accessing category name if available?
+                          // The Product model in product_models.dart doesn't have the Category object mapped
+                          // But for now, just showing the name is enough.
+                          "Product",
+                          style: const TextStyle(
+                            color: Colors.grey,
+                            fontSize: 12,
+                          ),
+                        ),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  ProductItemsScreen(product: product),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  );
+                }, childCount: _productSearchResults.length),
+              ),
+            // Bottom padding
+            const SliverToBoxAdapter(child: SizedBox(height: 24)),
+          ],
+        );
+      },
     );
   }
 }

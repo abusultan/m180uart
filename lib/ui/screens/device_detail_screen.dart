@@ -164,9 +164,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       return Stack(
         children: [
           Positioned.fill(
-            child: CustomPaint(
-              painter: CutPreviewPainter(_previewData!),
-            ),
+            child: CustomPaint(painter: CutPreviewPainter(_previewData!)),
           ),
           _buildAngleBadge(),
         ],
@@ -277,14 +275,19 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                     builder: (context, pngSnap) {
                       if (pngSnap.connectionState == ConnectionState.waiting) {
                         return const Center(
-                          child:
-                              CircularProgressIndicator(color: Color(0xFF00FF88)),
+                          child: CircularProgressIndicator(
+                            color: Color(0xFF00FF88),
+                          ),
                         );
                       }
                       final png = pngSnap.data;
                       if (png == null) {
                         return const Center(
-                          child: Icon(Icons.broken_image, color: Colors.grey, size: 50),
+                          child: Icon(
+                            Icons.broken_image,
+                            color: Colors.grey,
+                            size: 50,
+                          ),
                         );
                       }
                       return Image.memory(
@@ -372,10 +375,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       top: 16,
       child: InkWell(
         onTap: () async {
-          final newAngle = await showAngleDialog(
-            context,
-            _angleValue,
-          );
+          final newAngle = await showAngleDialog(context, _angleValue);
           if (newAngle == null) return;
           await _cutSettings.setAngleValue(newAngle);
           await _cutSettings.setAngleEnabled(true);
@@ -404,7 +404,6 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       ),
     );
   }
-
 
   Future<void> _downloadFile() async {
     if (widget.productItem == null) return;
@@ -483,7 +482,11 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       // 0.5. Call API to Record Use (Deduct Balance) - Gatekeeper
       // If this fails (e.g. server says no pieces), we stop.
       if (widget.productItem != null) {
-        await ApiService().recordCutterUse(widget.productItem!.id.toString());
+        final serial = _bluetooth.serialNumber ?? '';
+        await ApiService().recordCutterUse(
+          widget.productItem!.id.toString(),
+          serial,
+        );
         // If we are here, it succeeded. Local balance is updated by ApiService.
         setState(() {}); // Refresh UI for new balance
       }
@@ -534,9 +537,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         // We suspect previous "Wrong Cutting" was due to Packet Loss (missing digits).
         // We are sending RAW bytes now with improved Bluetooth reliability.
         bytesToSend = await _cutFile!.readAsBytes();
-        print(
-          "PLT machine detected. Sending RAW bytes (Java behavior).",
-        );
+        print("PLT machine detected. Sending RAW bytes (Java behavior).");
       } else {
         // Standard Machines: Read bytes directly (User confirmed SRC/SJC file for Sunshine New)
         // Reverted PLT encryption as per user feedback
@@ -637,7 +638,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     final sizeText = _previewData == null
         ? null
         : "W:${(_previewData!.maxX - _previewData!.minX).abs().round()} "
-            "L:${(_previewData!.maxY - _previewData!.minY).abs().round()} mm";
+              "L:${(_previewData!.maxY - _previewData!.minY).abs().round()} mm";
 
     return Scaffold(
       appBar: AppBar(
@@ -921,12 +922,10 @@ class CutPreviewPainter extends CustomPainter {
       ..strokeJoin = StrokeJoin.round;
 
     canvas.drawPath(path, paint);
-
   }
 
   @override
   bool shouldRepaint(covariant CutPreviewPainter oldDelegate) {
     return oldDelegate.data != data;
   }
-
 }

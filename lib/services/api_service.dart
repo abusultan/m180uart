@@ -15,8 +15,8 @@ class ApiService {
   ApiService._internal() {
     _dio = Dio(
       BaseOptions(
-        baseUrl: 'https://cutter.irbidbasket.com/api/',
-        // baseUrl: 'http://192.168.1.89:8000/api/',
+        // baseUrl: 'https://cutter.irbidbasket.com/api/',
+        baseUrl: 'http://192.168.1.89:8000/api/',
         connectTimeout: const Duration(seconds: 30),
         receiveTimeout: const Duration(seconds: 30),
         headers: {'Accept': 'application/json'},
@@ -233,6 +233,37 @@ class ApiService {
     }
   }
 
+  Future<List<Product>> searchAllProducts(String query, {int page = 1}) async {
+    try {
+      final Map<String, dynamic> params = {'search': query, 'page': page};
+
+      final response = await _dio.get(
+        'search-all-products',
+        queryParameters: params,
+      );
+
+      print("Search All Products Response: ${response.data}");
+      if (response.data['success'] == true) {
+        final rawData = response.data['data'];
+
+        final List list;
+        if (rawData is Map && rawData.containsKey('data')) {
+          list = rawData['data'];
+        } else if (rawData is List) {
+          list = rawData;
+        } else {
+          list = [];
+        }
+
+        return list.map((e) => Product.fromJson(e)).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Search All Products Error: $e');
+      return [];
+    }
+  }
+
   Future<List<ProductItem>> getProductItems(int productId) async {
     try {
       final response = await _dio.get('products/$productId/items');
@@ -264,11 +295,50 @@ class ApiService {
     }
   }
 
-  Future<bool> recordCutterUse(String productItemId) async {
+  Future<bool> addDevice(String serialNumber, String handshake) async {
+    try {
+      final response = await _dio.post(
+        'add-device',
+        data: {'serial_number': serialNumber, 'hand_shake': handshake},
+        options: Options(contentType: Headers.formUrlEncodedContentType),
+      );
+
+      final success = response.data['success'] == true;
+      print("Add device response: ${response.data}");
+      return success;
+    } catch (e) {
+      print('Add Device Error: $e');
+      return false;
+    }
+  }
+
+  Future<String?> getDeviceBySerialNumber(String serialNumber) async {
+    try {
+      final response = await _dio.post(
+        'get-device-by-serial-number',
+        data: {'serial_number': serialNumber},
+        options: Options(contentType: Headers.formUrlEncodedContentType),
+      );
+
+      print("Get Device Response: ${response.data}");
+      if (response.data['success'] == true && response.data['data'] != null) {
+        return response.data['data']['hand_shake'];
+      }
+      return null;
+    } catch (e) {
+      print('Get Device Error: $e');
+      return null;
+    }
+  }
+
+  Future<bool> recordCutterUse(
+    String productItemId,
+    String serialNumber,
+  ) async {
     try {
       final response = await _dio.post(
         'cutter-use',
-        data: {'product_item_id': productItemId},
+        data: {'product_item_id': productItemId, 'serial_number': serialNumber},
         options: Options(contentType: Headers.formUrlEncodedContentType),
       );
 
@@ -345,8 +415,9 @@ class ApiService {
     if (trimmed.isEmpty) return trimmed;
 
     final base = _dio.options.baseUrl;
-    final fileBase =
-        base.endsWith('/api/') ? base.replaceFirst(RegExp(r'/api/?$'), '/') : base;
+    final fileBase = base.endsWith('/api/')
+        ? base.replaceFirst(RegExp(r'/api/?$'), '/')
+        : base;
 
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
       return Uri.encodeFull(trimmed);

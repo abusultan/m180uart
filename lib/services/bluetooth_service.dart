@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'api_service.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart' as blue;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/encryption_util.dart';
@@ -43,6 +44,51 @@ class CutterBluetoothService {
     // Persist machine type for UI filtering even when not connected
     if (serial != null) {
       _persistLastMachineType(serial);
+      _syncDeviceHandshake(serial);
+    }
+  }
+
+  Future<void> _syncDeviceHandshake(String serial) async {
+    // 1. Try to fetch existing handshake from backend
+    final backendHandshake = await ApiService().getDeviceBySerialNumber(serial);
+
+    if (backendHandshake != null && backendHandshake.isNotEmpty) {
+      print("Restored handshake from Backend: $backendHandshake");
+      // Found! Cache it so we use it for communication.
+      // We assume isNewVersion=false for generic stored strings unless we know better,
+      // but the cached string is what matters for getSunshinePassword/etc.
+      // Using 'api' as mode to indicate source.
+      await cacheSuccessfulHandshake(backendHandshake, false, mode: "api");
+    } else {
+      // 2. Not found on backend -> Check Heuristics OR Register local handshake if known
+
+      // Heuristic: If serial looks like DQ/DX/LH, we KNOW the handshake is "DQ"
+      final upper = serial.toUpperCase();
+      if (upper.startsWith("DQ") ||
+          upper.startsWith("DX") ||
+          upper.startsWith("LH")) {
+        // This will cache locally AND add to backend via cacheSuccessfulHandshake internal logic
+        await cacheSuccessfulHandshake("DQ", false, mode: "heuristic");
+      } else {
+        // If no heuristic, check if we already have a handshake from elsewhere
+        _registerDeviceWithBackend(serial);
+      }
+    }
+  }
+
+  Future<void> _registerDeviceWithBackend(String serial) async {
+    // Try to get handshake from memory or disk
+    String? handshake = _successfulAgentType;
+    if (handshake == null) {
+      handshake = await getCachedHandshake(serial);
+    }
+
+    if (handshake != null) {
+      ApiService().addDevice(serial, handshake);
+    } else {
+      print(
+        "Skipping addDevice for now: Serial=$serial, but Handshake is unknown",
+      );
     }
   }
 
@@ -123,8 +169,11 @@ class CutterBluetoothService {
         // IsNewVersion is implicitly tied to the algorithm names usually, but let's store it to be safe if needed eventually
         // For now, simpler to just store the algo string.
         print("Persisted handshake for $_serialNumber: $agentType");
+
+        // Try registering now that we have handshake and serial
+        ApiService().addDevice(_serialNumber!, agentType);
       } catch (e) {
-        print("Error persisting handshake: $e");
+        print("Error persisting handshake or adding device: $e");
       }
     }
   }
@@ -270,6 +319,13 @@ class CutterBluetoothService {
       await _connectedDevice!.disconnect();
     }
     _connectedDevice = null;
+    // Clear session-specific data
+    _serialNumber = null;
+    _successfulAgentType = null;
+    _successfulIsNewVersion = null;
+    _lastHandshakeMode = null;
+    _autoHandshakeBuffer = "";
+    _serialUpdateController.add(null);
   }
 
   Future<void> write(String data) async {
@@ -395,6 +451,12 @@ class CutterBluetoothService {
       } else {
         // No cache, try default (most common: HandshakeNew)
         print("No cached algorithm, using HandshakeNew as default");
+
+        // Optimistically set this as the successful type so we can register it
+        if (_successfulAgentType == null) {
+          cacheSuccessfulHandshake("HandshakeNew", true, mode: "default");
+        }
+
         response = EncryptionUtil.getHandshakeNew(challenge);
       }
 
