@@ -359,7 +359,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "/bin/sh \"$FLUTTER_ROOT/packages/flutter_tools/bin/xcode_backend.sh\" build\n/usr/bin/xattr -dr com.apple.provenance \"$TARGET_BUILD_DIR/Flutter.framework\" || true";
+			shellScript = "export COPYFILE_DISABLE=1\nexport COPY_EXTENDED_ATTRIBUTES_DISABLE=1\n/bin/sh \"$FLUTTER_ROOT/packages/flutter_tools/bin/xcode_backend.sh\" build\n/usr/bin/xattr -dr com.apple.provenance \"$TARGET_BUILD_DIR/Flutter.framework\" || true";
 		};
 		A1B2C3D4E5F60718293A4B5C /* Strip Provenance */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -374,7 +374,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "/usr/bin/xattr -cr \"$TARGET_BUILD_DIR/Runner.app\" 2>/dev/null || true\n/usr/bin/find \"$TARGET_BUILD_DIR/Runner.app\" -name \"._*\" -delete 2>/dev/null || true\n/usr/bin/find \"$TARGET_BUILD_DIR/Runner.app\" -name \".DS_Store\" -delete 2>/dev/null || true\n/usr/bin/dot_clean -m \"$TARGET_BUILD_DIR/Runner.app\" 2>/dev/null || true\n/usr/bin/xattr -cr \"$TARGET_BUILD_DIR/Runner.app/Frameworks\" 2>/dev/null || true\n/usr/bin/find \"$TARGET_BUILD_DIR/Runner.app/Frameworks\" -name \"._*\" -delete 2>/dev/null || true\n/usr/bin/find \"$TARGET_BUILD_DIR/Runner.app/Frameworks\" -name \".DS_Store\" -delete 2>/dev/null || true\n/usr/bin/dot_clean -m \"$TARGET_BUILD_DIR/Runner.app/Frameworks\" 2>/dev/null || true";
+			shellScript = "export COPYFILE_DISABLE=1\nexport COPY_EXTENDED_ATTRIBUTES_DISABLE=1\n/usr/bin/xattr -cr \"$TARGET_BUILD_DIR/Runner.app\" 2>/dev/null || true\n/usr/bin/find \"$TARGET_BUILD_DIR/Runner.app\" -name \"._*\" -delete 2>/dev/null || true\n/usr/bin/find \"$TARGET_BUILD_DIR/Runner.app\" -name \".DS_Store\" -delete 2>/dev/null || true\n/usr/bin/dot_clean -m \"$TARGET_BUILD_DIR/Runner.app\" 2>/dev/null || true\n/usr/bin/xattr -cr \"$TARGET_BUILD_DIR/Runner.app/Frameworks\" 2>/dev/null || true\n/usr/bin/find \"$TARGET_BUILD_DIR/Runner.app/Frameworks\" -name \"._*\" -delete 2>/dev/null || true\n/usr/bin/find \"$TARGET_BUILD_DIR/Runner.app/Frameworks\" -name \".DS_Store\" -delete 2>/dev/null || true\n/usr/bin/dot_clean -m \"$TARGET_BUILD_DIR/Runner.app/Frameworks\" 2>/dev/null || true";
 		};
 		B7C8D9E0F1A2B3C4D5E6F708 /* Strip Provenance (Pre-Embed) */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -389,7 +389,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ -d \"$TARGET_BUILD_DIR\" ]; then\n  /usr/bin/find \"$TARGET_BUILD_DIR\" -maxdepth 3 \\( -name \"*.framework\" -o -name \"*.bundle\" \\) -print0 | while IFS= read -r -d '' f; do\n    tmp=\"$f.clean\"\n    /bin/rm -rf \"$tmp\"\n    /usr/bin/ditto --norsrc --noqtn \"$f\" \"$tmp\"\n    /bin/rm -rf \"$f\"\n    /bin/mv \"$tmp\" \"$f\"\n  done\nfi";
+			shellScript = "export COPYFILE_DISABLE=1\nexport COPY_EXTENDED_ATTRIBUTES_DISABLE=1\nAPP_PATH=\"$TARGET_BUILD_DIR/$WRAPPER_NAME\"\nif [ -d \"$APP_PATH/Frameworks\" ]; then\n  /usr/bin/find \"$APP_PATH/Frameworks\" -maxdepth 2 \\( -name \"*.framework\" -o -name \"*.bundle\" \\) -print0 | while IFS= read -r -d '' f; do\n    tmp=\"$f.clean\"\n    /bin/rm -rf \"$tmp\"\n    /usr/bin/ditto --norsrc --noqtn \"$f\" \"$tmp\"\n    /bin/rm -rf \"$f\"\n    /bin/mv \"$tmp\" \"$f\"\n  done\nfi";
 		};
 		C0D3BEEF1234567890ABCDE1 /* Manual Codesign */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -404,7 +404,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "APP_PATH=\"$TARGET_BUILD_DIR/$WRAPPER_NAME\"\nIDENTITY=\"$EXPANDED_CODE_SIGN_IDENTITY\"\nif [ -z \"$IDENTITY\" ]; then\n  IDENTITY=\"$CODE_SIGN_IDENTITY\"\nfi\n\n# Recopy the app bundle without resource forks/xattrs.\nTMP_APP=\"$APP_PATH.clean\"\n/bin/rm -rf \"$TMP_APP\"\n/usr/bin/ditto --norsrc --noqtn \"$APP_PATH\" \"$TMP_APP\"\n/bin/rm -rf \"$APP_PATH\"\n/bin/mv \"$TMP_APP\" \"$APP_PATH\"\n\n/usr/bin/xattr -cr \"$APP_PATH\" 2>/dev/null || true\n/usr/bin/find \"$APP_PATH\" -name \"._*\" -delete 2>/dev/null || true\n/usr/bin/find \"$APP_PATH\" -name \".DS_Store\" -delete 2>/dev/null || true\n/usr/bin/dot_clean -m \"$APP_PATH\" 2>/dev/null || true\n\nif [ -d \"$APP_PATH/Frameworks\" ]; then\n  /usr/bin/xattr -cr \"$APP_PATH/Frameworks\" 2>/dev/null || true\n  /usr/bin/find \"$APP_PATH/Frameworks\" -name \"._*\" -delete 2>/dev/null || true\n  /usr/bin/find \"$APP_PATH/Frameworks\" -name \".DS_Store\" -delete 2>/dev/null || true\n  /usr/bin/dot_clean -m \"$APP_PATH/Frameworks\" 2>/dev/null || true\n\n  /usr/bin/find \"$APP_PATH/Frameworks\" -maxdepth 2 -name \"*.framework\" -print0 | while IFS= read -r -d '' fw; do\n    /usr/bin/codesign --force --sign \"$IDENTITY\" --preserve-metadata=identifier,entitlements \"$fw\"\n  done\nfi\n\nENTITLEMENTS=\"$TARGET_TEMP_DIR/$PRODUCT_NAME.app.xcent\"\nif [ -f \"$ENTITLEMENTS\" ]; then\n  /usr/bin/codesign --force --sign \"$IDENTITY\" --entitlements \"$ENTITLEMENTS\" --timestamp=none --generate-entitlement-der \"$APP_PATH\"\nelse\n  /usr/bin/codesign --force --sign \"$IDENTITY\" --timestamp=none --generate-entitlement-der \"$APP_PATH\"\nfi";
+			shellScript = "export COPYFILE_DISABLE=1\nexport COPY_EXTENDED_ATTRIBUTES_DISABLE=1\nAPP_PATH=\"$TARGET_BUILD_DIR/$WRAPPER_NAME\"\nIDENTITY=\"$EXPANDED_CODE_SIGN_IDENTITY\"\nif [ -z \"$IDENTITY\" ]; then\n  IDENTITY=\"$CODE_SIGN_IDENTITY\"\nfi\n\n# Recopy the app bundle without resource forks/xattrs.\nTMP_APP=\"$APP_PATH.clean\"\n/bin/rm -rf \"$TMP_APP\"\n/usr/bin/ditto --norsrc --noqtn \"$APP_PATH\" \"$TMP_APP\"\n/bin/rm -rf \"$APP_PATH\"\n/bin/mv \"$TMP_APP\" \"$APP_PATH\"\n\n/usr/bin/xattr -cr \"$TARGET_BUILD_DIR\" 2>/dev/null || true\n/usr/bin/xattr -cr \"$APP_PATH\" 2>/dev/null || true\n/usr/bin/find \"$APP_PATH\" -name \"._*\" -delete 2>/dev/null || true\n/usr/bin/find \"$APP_PATH\" -name \".DS_Store\" -delete 2>/dev/null || true\n/usr/bin/dot_clean -m \"$APP_PATH\" 2>/dev/null || true\n\nif [ -d \"$APP_PATH/Frameworks\" ]; then\n  /usr/bin/xattr -cr \"$APP_PATH/Frameworks\" 2>/dev/null || true\n  /usr/bin/find \"$APP_PATH/Frameworks\" -name \"._*\" -delete 2>/dev/null || true\n  /usr/bin/find \"$APP_PATH/Frameworks\" -name \".DS_Store\" -delete 2>/dev/null || true\n  /usr/bin/dot_clean -m \"$APP_PATH/Frameworks\" 2>/dev/null || true\n\n  /usr/bin/find \"$APP_PATH/Frameworks\" -maxdepth 2 -name \"*.framework\" -print0 | while IFS= read -r -d '' fw; do\n    /usr/bin/codesign --force --sign \"$IDENTITY\" --preserve-metadata=identifier,entitlements \"$fw\"\n  done\nfi\n\nENTITLEMENTS=\"$TARGET_TEMP_DIR/$PRODUCT_NAME.app.xcent\"\nif [ -f \"$ENTITLEMENTS\" ]; then\n  /usr/bin/codesign --force --sign \"$IDENTITY\" --entitlements \"$ENTITLEMENTS\" --timestamp=none --generate-entitlement-der \"$APP_PATH\"\nelse\n  /usr/bin/codesign --force --sign \"$IDENTITY\" --timestamp=none --generate-entitlement-der \"$APP_PATH\"\nfi";
 		};
 		FBC5337B665529F02C928E39 /* [CP] Check Pods Manifest.lock */ = {
 			isa = PBXShellScriptBuildPhase;

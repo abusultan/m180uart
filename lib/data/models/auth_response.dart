@@ -5,6 +5,8 @@ class User {
   final String phone;
   final String address;
   final int remainingPieces;
+  final String? representativeName;
+  final int? representativeId;
 
   User({
     required this.id,
@@ -13,6 +15,8 @@ class User {
     required this.phone,
     required this.address,
     required this.remainingPieces,
+    this.representativeName,
+    this.representativeId,
   });
 
   factory User.fromJson(Map<String, dynamic> json) {
@@ -23,6 +27,15 @@ class User {
       phone: json['phone'] ?? '',
       address: json['address'] ?? '',
       remainingPieces: json['remaining_pieces'] ?? 0,
+      representativeName:
+          json['representative_name'] ??
+          json['mandob_name'] ??
+          json['rep_name'] ??
+          json['representative'],
+      representativeId:
+          json['representative_id'] ??
+          json['mandob_id'] ??
+          json['rep_id'],
     );
   }
 }

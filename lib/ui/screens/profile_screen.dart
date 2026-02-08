@@ -6,9 +6,58 @@ import '../../services/bluetooth_service.dart';
 import '../../providers/language_provider.dart';
 import 'login_screen.dart';
 import 'cut_settings_screen.dart';
+import 'cart_screen.dart';
+import 'attachments_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
+
+  void _requestRepresentative(BuildContext context) {
+    final user = ApiService().currentUser;
+    final repName = user?.representativeName ?? '';
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text(
+          'طلب مندوب',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: Text(
+          repName.isEmpty
+              ? 'لا يوجد مندوب مرتبط بالحساب.'
+              : 'سيتم إرسال تنبيه إلى المندوب: $repName',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'إلغاء',
+              style: TextStyle(color: Colors.grey),
+            ),
+          ),
+          if (repName.isNotEmpty)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('تم إرسال التنبيه (موكاب).'),
+                    backgroundColor: Color(0xFF00FF88),
+                  ),
+                );
+              },
+              child: const Text(
+                'إرسال',
+                style: TextStyle(color: Color(0xFF00FF88)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 
   void _logout(BuildContext context) {
     showDialog(
@@ -117,6 +166,69 @@ class ProfileScreen extends StatelessWidget {
                 borderRadius: BorderRadius.circular(12),
               ),
               leading: const Icon(
+                Icons.shopping_cart,
+                color: Color(0xFF00FF88),
+              ),
+              title: const Text(
+                'سلة المنتجات',
+                style: TextStyle(color: Colors.white),
+              ),
+              trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => const CartScreen(),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              tileColor: const Color(0xFF1E1E1E),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              leading: const Icon(
+                Icons.notifications_active,
+                color: Color(0xFF00FF88),
+              ),
+              title: const Text(
+                'طلب مندوب',
+                style: TextStyle(color: Colors.white),
+              ),
+              trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+              onTap: () => _requestRepresentative(context),
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              tileColor: const Color(0xFF1E1E1E),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              leading: const Icon(
+                Icons.link,
+                color: Color(0xFF00FF88),
+              ),
+              title: const Text(
+                'ملحقات',
+                style: TextStyle(color: Colors.white),
+              ),
+              trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => const AttachmentsScreen(),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              tileColor: const Color(0xFF1E1E1E),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              leading: const Icon(
                 Icons.tune,
                 color: Color(0xFF00FF88),
               ),
@@ -133,7 +245,7 @@ class ProfileScreen extends StatelessWidget {
                 );
               },
             ),
-            const SizedBox(height: 32),
+            const SizedBox(height: 24),
             // Language Selection
             Text(
               AppStrings.of(context, 'language'),
