@@ -7,9 +7,9 @@ import '../../services/bluetooth_service.dart';
 import '../../data/models/product_models.dart';
 import 'device_detail_screen.dart';
 import '../../core/cut_file_transformer.dart';
+import '../../core/app_strings.dart';
 import '../../utils/svg_outline.dart';
 import '../../services/svg_renderer.dart';
-import '../../services/bluetooth_service.dart';
 import 'package:flutter_svg/flutter_svg.dart' as svg;
 
 class ProductItemsScreen extends StatefulWidget {
@@ -229,7 +229,7 @@ class _ProductItemsScreenState extends State<ProductItemsScreen> {
             child: CircularProgressIndicator(
               value: loadingProgress.expectedTotalBytes != null
                   ? loadingProgress.cumulativeBytesLoaded /
-                      loadingProgress.expectedTotalBytes!
+                        loadingProgress.expectedTotalBytes!
                   : null,
               color: const Color(0xFF00FF88),
             ),
@@ -286,8 +286,9 @@ class _ProductItemsScreenState extends State<ProductItemsScreen> {
                     builder: (context, pngSnap) {
                       if (pngSnap.connectionState == ConnectionState.waiting) {
                         return const Center(
-                          child:
-                              CircularProgressIndicator(color: Color(0xFF00FF88)),
+                          child: CircularProgressIndicator(
+                            color: Color(0xFF00FF88),
+                          ),
                         );
                       }
                       final png = pngSnap.data;
@@ -360,11 +361,10 @@ class _ProductItemsScreenState extends State<ProductItemsScreen> {
     );
   }
 
-
-  Widget _buildFilterButton(String title, bool isSelected) {
+  Widget _buildFilterButton(String label, bool isSelected, String filterValue) {
     return Expanded(
       child: GestureDetector(
-        onTap: () => _setFilter(title),
+        onTap: () => _setFilter(filterValue),
         child: Container(
           margin: const EdgeInsets.symmetric(horizontal: 4),
           padding: const EdgeInsets.symmetric(vertical: 12),
@@ -378,7 +378,7 @@ class _ProductItemsScreenState extends State<ProductItemsScreen> {
             ),
           ),
           child: Text(
-            title,
+            label,
             textAlign: TextAlign.center,
             style: TextStyle(
               color: isSelected ? Colors.black : Colors.white,
@@ -409,9 +409,21 @@ class _ProductItemsScreenState extends State<ProductItemsScreen> {
             padding: const EdgeInsets.all(16.0),
             child: Row(
               children: [
-                _buildFilterButton('All', _selectedFilter == 'All'),
-                _buildFilterButton('Back', _selectedFilter == 'Back'),
-                _buildFilterButton('Front', _selectedFilter == 'Front'),
+                _buildFilterButton(
+                  AppStrings.of(context, 'filter_all'),
+                  _selectedFilter == 'All',
+                  'All',
+                ),
+                _buildFilterButton(
+                  AppStrings.of(context, 'filter_back'),
+                  _selectedFilter == 'Back',
+                  'Back',
+                ),
+                _buildFilterButton(
+                  AppStrings.of(context, 'filter_front'),
+                  _selectedFilter == 'Front',
+                  'Front',
+                ),
               ],
             ),
           ),
@@ -436,9 +448,9 @@ class _ProductItemsScreenState extends State<ProductItemsScreen> {
                       physics: const AlwaysScrollableScrollPhysics(),
                       child: Container(
                         padding: const EdgeInsets.all(20),
-                        child: const Text(
-                          "No items found",
-                          style: TextStyle(color: Colors.white),
+                        child: Text(
+                          AppStrings.of(context, 'no_items_found'),
+                          style: const TextStyle(color: Colors.white),
                         ),
                       ),
                     ),
@@ -536,9 +548,12 @@ class _ProductItemsScreenState extends State<ProductItemsScreen> {
                                             ).withOpacity(0.3),
                                           ),
                                         ),
-                                        child: const Text(
-                                          "SELECT",
-                                          style: TextStyle(
+                                        child: Text(
+                                          AppStrings.of(
+                                            context,
+                                            'select_button',
+                                          ),
+                                          style: const TextStyle(
                                             color: Color(0xFF00FF88),
                                             fontWeight: FontWeight.bold,
                                             fontSize: 10,

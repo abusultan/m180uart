@@ -20,22 +20,22 @@ class ProfileScreen extends StatelessWidget {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E1E),
-        title: const Text(
-          'طلب مندوب',
-          style: TextStyle(color: Colors.white),
+        title: Text(
+          AppStrings.of(context, 'request_rep'),
+          style: const TextStyle(color: Colors.white),
         ),
         content: Text(
           repName.isEmpty
-              ? 'لا يوجد مندوب مرتبط بالحساب.'
-              : 'سيتم إرسال تنبيه إلى المندوب: $repName',
+              ? AppStrings.of(context, 'no_rep_found')
+              : '${AppStrings.of(context, 'rep_notification_msg')}$repName',
           style: const TextStyle(color: Colors.white70),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text(
-              'إلغاء',
-              style: TextStyle(color: Colors.grey),
+            child: Text(
+              AppStrings.of(context, 'cancel'),
+              style: const TextStyle(color: Colors.grey),
             ),
           ),
           if (repName.isNotEmpty)
@@ -43,15 +43,15 @@ class ProfileScreen extends StatelessWidget {
               onPressed: () {
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('تم إرسال التنبيه (موكاب).'),
-                    backgroundColor: Color(0xFF00FF88),
+                  SnackBar(
+                    content: Text(AppStrings.of(context, 'notification_sent')),
+                    backgroundColor: const Color(0xFF00FF88),
                   ),
                 );
               },
-              child: const Text(
-                'إرسال',
-                style: TextStyle(color: Color(0xFF00FF88)),
+              child: Text(
+                AppStrings.of(context, 'send'),
+                style: const TextStyle(color: Color(0xFF00FF88)),
               ),
             ),
         ],
@@ -169,16 +169,14 @@ class ProfileScreen extends StatelessWidget {
                 Icons.shopping_cart,
                 color: Color(0xFF00FF88),
               ),
-              title: const Text(
-                'سلة المنتجات',
-                style: TextStyle(color: Colors.white),
+              title: Text(
+                AppStrings.of(context, 'product_cart'),
+                style: const TextStyle(color: Colors.white),
               ),
               trailing: const Icon(Icons.chevron_right, color: Colors.grey),
               onTap: () {
                 Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (context) => const CartScreen(),
-                  ),
+                  MaterialPageRoute(builder: (context) => const CartScreen()),
                 );
               },
             ),
@@ -192,9 +190,9 @@ class ProfileScreen extends StatelessWidget {
                 Icons.notifications_active,
                 color: Color(0xFF00FF88),
               ),
-              title: const Text(
-                'طلب مندوب',
-                style: TextStyle(color: Colors.white),
+              title: Text(
+                AppStrings.of(context, 'request_rep'),
+                style: const TextStyle(color: Colors.white),
               ),
               trailing: const Icon(Icons.chevron_right, color: Colors.grey),
               onTap: () => _requestRepresentative(context),
@@ -205,13 +203,10 @@ class ProfileScreen extends StatelessWidget {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
-              leading: const Icon(
-                Icons.link,
-                color: Color(0xFF00FF88),
-              ),
-              title: const Text(
-                'ملحقات',
-                style: TextStyle(color: Colors.white),
+              leading: const Icon(Icons.link, color: Color(0xFF00FF88)),
+              title: Text(
+                AppStrings.of(context, 'attachments'),
+                style: const TextStyle(color: Colors.white),
               ),
               trailing: const Icon(Icons.chevron_right, color: Colors.grey),
               onTap: () {
@@ -228,13 +223,10 @@ class ProfileScreen extends StatelessWidget {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
-              leading: const Icon(
-                Icons.tune,
-                color: Color(0xFF00FF88),
-              ),
-              title: const Text(
-                'Cut Settings',
-                style: TextStyle(color: Colors.white),
+              leading: const Icon(Icons.tune, color: Color(0xFF00FF88)),
+              title: Text(
+                AppStrings.of(context, 'cut_settings'),
+                style: const TextStyle(color: Colors.white),
               ),
               trailing: const Icon(Icons.chevron_right, color: Colors.grey),
               onTap: () {

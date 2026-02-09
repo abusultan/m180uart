@@ -407,9 +407,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                         const AlwaysScrollableScrollPhysics(),
                                     child: Container(
                                       padding: const EdgeInsets.all(20),
-                                      child: const Text(
-                                        "No matching categories found",
-                                        style: TextStyle(color: Colors.white),
+                                      child: Text(
+                                        AppStrings.of(
+                                          context,
+                                          'no_matching_categories',
+                                        ),
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -555,12 +560,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return CustomScrollView(
           slivers: [
             if (matchingCategories.isNotEmpty) ...[
-              const SliverToBoxAdapter(
+              SliverToBoxAdapter(
                 child: Padding(
-                  padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                   child: Text(
-                    "Matching Categories",
-                    style: TextStyle(
+                    AppStrings.of(context, 'matching_categories'),
+                    style: const TextStyle(
                       color: Color(0xFF00FF88),
                       fontSize: 14,
                       fontWeight: FontWeight.bold,
@@ -584,12 +589,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               const SliverToBoxAdapter(child: SizedBox(height: 24)),
             ],
-            const SliverToBoxAdapter(
+            SliverToBoxAdapter(
               child: Padding(
-                padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: Text(
-                  "Matching Products",
-                  style: TextStyle(
+                  AppStrings.of(context, 'matching_products'),
+                  style: const TextStyle(
                     color: Color(0xFF00FF88),
                     fontSize: 14,
                     fontWeight: FontWeight.bold,
@@ -607,12 +612,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
               )
             else if (_productSearchResults.isEmpty)
-              const SliverToBoxAdapter(
+              SliverToBoxAdapter(
                 child: Padding(
-                  padding: EdgeInsets.all(20.0),
+                  padding: const EdgeInsets.all(20.0),
                   child: Text(
-                    "No products found",
-                    style: TextStyle(
+                    AppStrings.of(context, 'no_products_found'),
+                    style: const TextStyle(
                       color: Colors.grey,
                       fontStyle: FontStyle.italic,
                     ),
@@ -662,10 +667,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                         ),
                         subtitle: Text(
-                          // Accessing category name if available?
-                          // The Product model in product_models.dart doesn't have the Category object mapped
-                          // But for now, just showing the name is enough.
-                          "Product",
+                          AppStrings.of(context, 'product_label'),
                           style: const TextStyle(
                             color: Colors.grey,
                             fontSize: 12,

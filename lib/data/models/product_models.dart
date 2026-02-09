@@ -129,3 +129,102 @@ class ProductDetail {
     );
   }
 }
+
+class Good {
+  final int id;
+  final String nameAr;
+  final String nameEn;
+  final String image;
+  final String? descriptionAr;
+  final String? descriptionEn;
+  final String price;
+  final String? priceAfterDiscount;
+  final int stock;
+  final int isActive;
+  final String createdAt;
+  final String updatedAt;
+
+  Good({
+    required this.id,
+    required this.nameAr,
+    required this.nameEn,
+    required this.image,
+    this.descriptionAr,
+    this.descriptionEn,
+    required this.price,
+    this.priceAfterDiscount,
+    required this.stock,
+    required this.isActive,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory Good.fromJson(Map<String, dynamic> json) {
+    return Good(
+      id: json['id'] ?? 0,
+      nameAr: json['name_ar'] ?? '',
+      nameEn: json['name_en'] ?? '',
+      image: json['image'] ?? '',
+      descriptionAr: json['description_ar'],
+      descriptionEn: json['description_en'],
+      price: json['price']?.toString() ?? '0.00',
+      priceAfterDiscount: json['price_after_discount']?.toString(),
+      stock: json['stock'] ?? 0,
+      isActive: json['is_active'] ?? 1,
+      createdAt: json['created_at'] ?? '',
+      updatedAt: json['updated_at'] ?? '',
+    );
+  }
+}
+
+class GoodsPaginationResponse {
+  final int currentPage;
+  final List<Good> data;
+  final String firstPageUrl;
+  final int? from;
+  final int lastPage;
+  final String lastPageUrl;
+  final String? nextPageUrl;
+  final String path;
+  final int perPage;
+  final String? prevPageUrl;
+  final int? to;
+  final int total;
+
+  GoodsPaginationResponse({
+    required this.currentPage,
+    required this.data,
+    required this.firstPageUrl,
+    this.from,
+    required this.lastPage,
+    required this.lastPageUrl,
+    this.nextPageUrl,
+    required this.path,
+    required this.perPage,
+    this.prevPageUrl,
+    this.to,
+    required this.total,
+  });
+
+  factory GoodsPaginationResponse.fromJson(Map<String, dynamic> json) {
+    final dataJson = json['data'] as Map<String, dynamic>;
+    final goodsList = (dataJson['data'] as List)
+        .map((item) => Good.fromJson(item))
+        .toList();
+
+    return GoodsPaginationResponse(
+      currentPage: dataJson['current_page'] ?? 1,
+      data: goodsList,
+      firstPageUrl: dataJson['first_page_url'] ?? '',
+      from: dataJson['from'],
+      lastPage: dataJson['last_page'] ?? 1,
+      lastPageUrl: dataJson['last_page_url'] ?? '',
+      nextPageUrl: dataJson['next_page_url'],
+      path: dataJson['path'] ?? '',
+      perPage: dataJson['per_page'] ?? 20,
+      prevPageUrl: dataJson['prev_page_url'],
+      to: dataJson['to'],
+      total: dataJson['total'] ?? 0,
+    );
+  }
+}

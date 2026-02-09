@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../services/api_service.dart';
 import '../../data/models/product_models.dart';
+import '../../core/app_strings.dart';
 import 'product_items_screen.dart';
 
 class ProductListScreen extends StatefulWidget {
@@ -113,7 +114,10 @@ class _ProductListScreenState extends State<ProductListScreen> {
               controller: _searchController,
               style: const TextStyle(color: Colors.white),
               decoration: InputDecoration(
-                hintText: "Search ${widget.category.name}...",
+                hintText: AppStrings.of(
+                  context,
+                  'search_in_category',
+                ).replaceAll('{category}', widget.category.name),
                 hintStyle: const TextStyle(color: Colors.grey),
                 prefixIcon: const Icon(Icons.search, color: Colors.grey),
                 filled: true,

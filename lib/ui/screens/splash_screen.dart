@@ -111,7 +111,7 @@ class _SplashScreenState extends State<SplashScreen>
                 const SizedBox(height: 30),
                 // App Name with Modern Typography
                 const Text(
-                  "Anticrash Cutter",
+                  "Anticrash",
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 32,

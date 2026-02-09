@@ -26,7 +26,7 @@ class CutterApp extends StatelessWidget {
     return Consumer<LanguageProvider>(
       builder: (context, languageProvider, child) {
         return MaterialApp(
-          title: 'Anticrash Cutter',
+          title: 'Anticrash',
           debugShowCheckedModeBanner: false,
           locale: languageProvider
               .locale, // This might be null, which is fine (uses system default)

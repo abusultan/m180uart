@@ -278,6 +278,130 @@ class ApiService {
     }
   }
 
+  Future<GoodsPaginationResponse?> getGoods({int page = 1}) async {
+    try {
+      final response = await _dio.get('goods', queryParameters: {'page': page});
+
+      print("Get Goods Response: ${response.data}");
+      if (response.data['status'] == true) {
+        return GoodsPaginationResponse.fromJson(response.data);
+      }
+      return null;
+    } catch (e) {
+      print('Get Goods Error: $e');
+      return null;
+    }
+  }
+
+  Future<Good?> getGoodById(int id) async {
+    try {
+      final response = await _dio.get('goods/$id');
+
+      print("Get Good By ID Response: ${response.data}");
+      if (response.data['status'] == true) {
+        return Good.fromJson(response.data['data']);
+      }
+      return null;
+    } catch (e) {
+      print('Get Good By ID Error: $e');
+      return null;
+    }
+  }
+
+  Future<GoodsPaginationResponse?> searchGoods(
+    String query, {
+    int page = 1,
+  }) async {
+    try {
+      final encodedQuery = Uri.encodeComponent(query);
+      final response = await _dio.get(
+        'goods/search/$encodedQuery', // استخدام المسار بناءً على كود الباك آند
+        queryParameters: {'page': page},
+      );
+
+      print("Search Goods Response: ${response.data}");
+      if (response.data['status'] == true) {
+        return GoodsPaginationResponse.fromJson(response.data);
+      }
+      return null;
+    } catch (e) {
+      print('Search Goods Error: $e');
+      return null;
+    }
+  }
+
+  // --- Cart System ---
+
+  Future<Map<String, dynamic>?> addToCart(int goodId, int quantity) async {
+    try {
+      final formData = FormData.fromMap({
+        'good_id': goodId.toString(),
+        'quantity': quantity.toString(),
+      });
+      final response = await _dio.post('add-to-cart', data: formData);
+      if (response.statusCode == 200) return response.data;
+      return null;
+    } catch (e) {
+      print('Add to Cart Error: $e');
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> getCart() async {
+    try {
+      final response = await _dio.get('get-cart');
+      if (response.statusCode == 200 && response.data != null) {
+        return response.data;
+      }
+      return null;
+    } catch (e) {
+      print('Get Cart Error: $e');
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> removeFromCart(int goodId) async {
+    try {
+      final formData = FormData.fromMap({'good_id': goodId.toString()});
+      final response = await _dio.post('remove-from-cart', data: formData);
+      if (response.statusCode == 200) return response.data;
+      return null;
+    } catch (e) {
+      print('Remove from Cart Error: $e');
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> updateCartQuantity(
+    int goodId,
+    int quantity,
+  ) async {
+    try {
+      final formData = FormData.fromMap({
+        'good_id': goodId.toString(),
+        'quantity': quantity.toString(),
+      });
+      final response = await _dio.post('update-quantity', data: formData);
+      if (response.statusCode == 200) return response.data;
+      return null;
+    } catch (e) {
+      print('Update Quantity Error: $e');
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> checkout() async {
+    try {
+      final response = await _dio.post('checkout');
+      return {'success': response.statusCode == 200, 'data': response.data};
+    } catch (e) {
+      if (e is DioException && e.response != null) {
+        return {'success': false, 'message': e.response?.data['message']};
+      }
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
   // --- User ---
 
   Future<User?> getUserInfo() async {
