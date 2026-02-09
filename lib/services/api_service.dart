@@ -15,8 +15,8 @@ class ApiService {
   ApiService._internal() {
     _dio = Dio(
       BaseOptions(
-        // baseUrl: 'https://cutter.irbidbasket.com/api/',
-        baseUrl: 'http://192.168.1.89:8000/api/',
+        baseUrl: 'https://cutter.irbidbasket.com/api/',
+        // baseUrl: 'http://192.168.1.89:8000/api/',
         connectTimeout: const Duration(seconds: 30),
         receiveTimeout: const Duration(seconds: 30),
         headers: {'Accept': 'application/json'},
