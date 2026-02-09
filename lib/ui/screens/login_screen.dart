@@ -3,6 +3,7 @@ import '../../services/api_service.dart';
 import '../../core/app_strings.dart';
 import 'register_screen.dart';
 import 'main_screen.dart';
+import 'rep_main_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -56,10 +57,14 @@ class _LoginScreenState extends State<LoginScreen> {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('login_user', user);
         await prefs.setString('login_pass', pass);
+        final isRepMode = prefs.getBool('mock_rep_mode') ?? false;
 
         if (!mounted) return;
         Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (context) => const MainScreen()),
+          MaterialPageRoute(
+            builder: (context) =>
+                isRepMode ? const RepMainScreen() : const MainScreen(),
+          ),
           (Route<dynamic> route) => false,
         );
       } else {
@@ -83,13 +88,31 @@ class _LoginScreenState extends State<LoginScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                AppStrings.of(context, 'app_name'),
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 32,
-                  fontWeight: FontWeight.bold,
+              GestureDetector(
+                onLongPress: () async {
+                  final prefs = await SharedPreferences.getInstance();
+                  final current = prefs.getBool('mock_rep_mode') ?? false;
+                  await prefs.setBool('mock_rep_mode', !current);
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        !current
+                            ? 'تم تفعيل وضع المندوب (موكاب)'
+                            : 'تم إلغاء وضع المندوب (موكاب)',
+                      ),
+                      backgroundColor: const Color(0xFF00FF88),
+                    ),
+                  );
+                },
+                child: Text(
+                  AppStrings.of(context, 'app_name'),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 32,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
               const SizedBox(height: 48),

@@ -3,8 +3,10 @@ import 'package:provider/provider.dart';
 import 'ui/screens/login_screen.dart';
 import 'ui/screens/splash_screen.dart';
 import 'ui/screens/main_screen.dart';
+import 'ui/screens/rep_main_screen.dart';
 import 'services/api_service.dart';
 import 'providers/language_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:flutter_localizations/flutter_localizations.dart';
 
@@ -69,6 +71,8 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
 
   Future<void> _checkAuth() async {
     final token = await ApiService().loadToken();
+    final prefs = await SharedPreferences.getInstance();
+    final isRepMode = prefs.getBool('mock_rep_mode') ?? false;
     if (token != null && token.isNotEmpty) {
       // Valid token found, try to get user info
       final user = await ApiService().getUserInfo();
@@ -76,7 +80,10 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
         if (!mounted) return;
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (context) => const MainScreen()),
+          MaterialPageRoute(
+            builder: (context) =>
+                isRepMode ? const RepMainScreen() : const MainScreen(),
+          ),
         );
         return;
       }

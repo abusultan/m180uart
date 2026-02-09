@@ -51,6 +51,10 @@
 	<string>This app needs Bluetooth to connect to cutter machines.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>This app needs location access to scan for Bluetooth devices.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>This app needs location access to follow representative activity.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>This app needs location access to follow representative activity.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>This app needs camera access to scan machine serial codes.</string>
 </dict>
