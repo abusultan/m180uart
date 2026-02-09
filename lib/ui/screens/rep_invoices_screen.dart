@@ -17,6 +17,8 @@ class _RepInvoicesScreenState extends State<RepInvoicesScreen> {
   DateTime? _sessionEnd;
   String _sessionLocation = '';
   bool _loadingLocation = false;
+  bool _savingInvoice = false;
+  bool _savingCharge = false;
 
   final List<_SavedInvoice> _history = [];
 
@@ -66,40 +68,105 @@ class _RepInvoicesScreenState extends State<RepInvoicesScreen> {
     return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
-  Future<void> _startSession(_MockCustomer customer) async {
+  void _startSession(_MockCustomer customer) {
     setState(() {
       _selectedCustomer = customer;
       _sessionStart = DateTime.now();
       _sessionEnd = null;
       _sessionLocation = '';
-      _loadingLocation = true;
+      _loadingLocation = false;
       _selectedItems.clear();
     });
-
-    try {
-      final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-      if (!mounted) return;
-      setState(() {
-        _sessionLocation =
-            '${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}';
-        _loadingLocation = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _sessionLocation = 'غير متاح';
-        _loadingLocation = false;
-      });
-    }
   }
 
-  void _endSession() {
-    if (_sessionStart == null) return;
-    setState(() {
-      _sessionEnd = DateTime.now();
-    });
+  Future<void> _selectCustomer() async {
+    final _MockCustomer? customer = await showModalBottomSheet<_MockCustomer>(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: _searchController,
+                    onChanged: (_) => setModalState(() {}),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'بحث عن الزبون',
+                      labelStyle: TextStyle(color: Colors.grey),
+                      filled: true,
+                      fillColor: Color(0xFF121212),
+                      border: OutlineInputBorder(),
+                      prefixIcon:
+                          Icon(Icons.search, color: Color(0xFF00FF88)),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Flexible(
+                    child: ListView.builder(
+                      itemCount: _filteredCustomers.length,
+                      itemBuilder: (context, index) {
+                        final customer = _filteredCustomers[index];
+                        return ListTile(
+                          title: Text(
+                            customer.name,
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                          subtitle: Text(
+                            customer.phone,
+                            style: const TextStyle(color: Colors.white70),
+                          ),
+                          onTap: () => Navigator.pop(context, customer),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (customer == null) return;
+    if (!mounted) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text(
+          'تأكيد',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: Text(
+          'سيتم إنشاء جلسة للزبون ${customer.name}. هل تريد المتابعة؟',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('إلغاء', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('نعم', style: TextStyle(color: Color(0xFF00FF88))),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      _startSession(customer);
+    }
   }
 
   void _openAddDialog(_MockProduct product) {
@@ -182,23 +249,110 @@ class _RepInvoicesScreenState extends State<RepInvoicesScreen> {
     );
   }
 
-  void _saveInvoice() {
-    if (_selectedItems.isEmpty || _selectedCustomer == null) return;
-    if (_sessionEnd == null) {
+  Future<void> _saveAndEndSession() async {
+    await _saveInvoiceInternal(chargeAccount: false);
+  }
+
+  Future<void> _saveAndCharge() async {
+    if (_selectedCustomer == null) return;
+    if (_selectedItems.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('يرجى إنهاء الجلسة أولاً'),
+          content: Text('يرجى إضافة منتجات للفاتورة'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    final customer = _selectedCustomer!;
+    final int totalQty =
+        _selectedItems.values.fold(0, (sum, item) => sum + item.qty);
+    if (totalQty <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('لا يوجد عدد صالح للشحن'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text(
+          'شحن رصيد',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: Text(
+          'سوف يتم شحن رصيد ${customer.name}\n'
+          'بعدد اللزقات: $totalQty',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('إلغاء', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('شحن', style: TextStyle(color: Color(0xFF00FF88))),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+    await _saveInvoiceInternal(chargeAccount: true, chargeQty: totalQty);
+  }
+
+  Future<void> _saveInvoiceInternal({
+    required bool chargeAccount,
+    int? chargeQty,
+  }) async {
+    if (_selectedCustomer == null) return;
+    if (_selectedItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('يرجى إضافة منتجات للفاتورة'),
           backgroundColor: Colors.orange,
         ),
       );
       return;
     }
 
+    setState(() {
+      if (chargeAccount) {
+        _savingCharge = true;
+      } else {
+        _savingInvoice = true;
+      }
+    });
+
     final customer = _selectedCustomer!;
-    final start = _sessionStart!;
-    final end = _sessionEnd!;
-    final duration = _sessionDuration;
-    final location = _sessionLocation.isEmpty ? 'غير متاح' : _sessionLocation;
+    final start = _sessionStart ?? DateTime.now();
+    final end = DateTime.now();
+
+    final location = await _fetchLocation();
+    if (location == null) {
+      setState(() {
+        _savingInvoice = false;
+        _savingCharge = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('يرجى تفعيل الموقع والسماح بالوصول قبل الحفظ'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+
+    final duration = end.difference(start);
+    final durationText =
+        '${duration.inMinutes.toString().padLeft(2, '0')}:${(duration.inSeconds % 60).toString().padLeft(2, '0')}';
     final total = _total;
 
     final itemsCopy = _selectedItems.values
@@ -230,7 +384,20 @@ class _RepInvoicesScreenState extends State<RepInvoicesScreen> {
       _sessionLocation = '';
       _loadingLocation = false;
       _searchController.clear();
+      _savingInvoice = false;
+      _savingCharge = false;
     });
+
+    if (chargeAccount && chargeQty != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'تم شحن ${chargeQty.toString()} لصالح ${customer.name} (موكاب)',
+          ),
+          backgroundColor: const Color(0xFF00FF88),
+        ),
+      );
+    }
 
     showDialog(
       context: context,
@@ -242,9 +409,10 @@ class _RepInvoicesScreenState extends State<RepInvoicesScreen> {
         ),
         content: Text(
           'الزبون: ${customer.name}\n'
-          'الوقت: $duration\n'
+          'الوقت: $durationText\n'
           'الموقع: $location\n'
-          'الإجمالي: ${total.toStringAsFixed(2)} JOD',
+          'الإجمالي: ${total.toStringAsFixed(2)} JOD'
+          '${chargeAccount && chargeQty != null ? '\nتم شحن: $chargeQty لزقة' : ''}',
           style: const TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -255,6 +423,37 @@ class _RepInvoicesScreenState extends State<RepInvoicesScreen> {
         ],
       ),
     );
+  }
+
+  Future<String?> _fetchLocation() async {
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        return null;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return null;
+      }
+
+      try {
+        final position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+        );
+        return '${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}';
+      } catch (_) {
+        final last = await Geolocator.getLastKnownPosition();
+        if (last == null) return null;
+        return '${last.latitude.toStringAsFixed(6)}, ${last.longitude.toStringAsFixed(6)}';
+      }
+    } catch (_) {
+      return null;
+    }
   }
 
   void _exportPdfMock(_SavedInvoice invoice) {
@@ -310,48 +509,25 @@ class _RepInvoicesScreenState extends State<RepInvoicesScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                TextField(
-                  controller: _searchController,
-                  onChanged: (_) => setState(() {}),
-                  style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                    labelText: 'بحث عن الزبون',
-                    labelStyle: TextStyle(color: Colors.grey),
-                    filled: true,
-                    fillColor: Color(0xFF121212),
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.search, color: Color(0xFF00FF88)),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  height: 140,
-                  child: ListView.builder(
-                    itemCount: _filteredCustomers.length,
-                    itemBuilder: (context, index) {
-                      final customer = _filteredCustomers[index];
-                      final selected =
-                          _selectedCustomer?.id == customer.id;
-                      return ListTile(
-                        title: Text(
-                          customer.name,
-                          style: const TextStyle(color: Colors.white),
+                if (_selectedCustomer == null) ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _selectCustomer,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF00FF88),
+                        foregroundColor: Colors.black,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                        subtitle: Text(
-                          customer.phone,
-                          style: const TextStyle(color: Colors.white70),
-                        ),
-                        trailing: selected
-                            ? const Icon(Icons.check_circle,
-                                color: Color(0xFF00FF88))
-                            : const Icon(Icons.chevron_right,
-                                color: Colors.grey),
-                        onTap: () => _startSession(customer),
-                      );
-                    },
+                      ),
+                      child: const Text(
+                        'اختيار الزبون',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
                   ),
-                ),
-                if (_selectedCustomer != null) ...[
+                ] else ...[
                   const SizedBox(height: 8),
                   Text(
                     'جلسة مع: ${_selectedCustomer!.name}',
@@ -366,28 +542,8 @@ class _RepInvoicesScreenState extends State<RepInvoicesScreen> {
                   Text(
                     _loadingLocation
                         ? 'جاري تحديد الموقع...'
-                        : 'الموقع: ${_sessionLocation.isEmpty ? "غير متاح" : _sessionLocation}',
+                        : 'الموقع: سيتم حفظه عند الإنهاء',
                     style: const TextStyle(color: Colors.white70),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _sessionEnd == null ? _endSession : null,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF00FF88),
-                        foregroundColor: Colors.black,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: Text(
-                        _sessionEnd == null
-                            ? 'إنهاء الجلسة'
-                            : 'تم إنهاء الجلسة',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                    ),
                   ),
                 ],
               ],
@@ -550,25 +706,68 @@ class _RepInvoicesScreenState extends State<RepInvoicesScreen> {
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed:
-                        _selectedItems.isEmpty ||
-                                _selectedCustomer == null ||
-                                _sessionEnd == null
-                            ? null
-                            : _saveInvoice,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF00FF88),
-                      foregroundColor: Colors.black,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: _selectedItems.isEmpty ||
+                                  _selectedCustomer == null
+                              ? null
+                              : _saveAndEndSession,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF00FF88),
+                            foregroundColor: Colors.black,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                          ),
+                          child: _savingInvoice
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.black,
+                                  ),
+                                )
+                              : const Text(
+                                  'حفظ',
+                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                        ),
                       ),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    child: const Text(
-                      'حفظ الفاتورة',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: _selectedItems.isEmpty ||
+                                  _selectedCustomer == null
+                              ? null
+                              : _saveAndCharge,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF00FF88),
+                            foregroundColor: Colors.black,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                          ),
+                          child: _savingCharge
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.black,
+                                  ),
+                                )
+                              : const Text(
+                                  'حفظ مع شحن',
+                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../data/mock_rep_store.dart';
 
 class RepOrdersScreen extends StatefulWidget {
   const RepOrdersScreen({super.key});
@@ -8,6 +9,15 @@ class RepOrdersScreen extends StatefulWidget {
 }
 
 class _RepOrdersScreenState extends State<RepOrdersScreen> {
+  final Map<String, int> _stock = {
+    'Front Full': 2,
+    'Front Shell': 1,
+    'Back Cover': 3,
+    'Camera Lens': 0,
+    'Side': 4,
+    'UV': 1,
+  };
+
   final List<_MockOrder> _orders = [
     _MockOrder(
       id: 'ORD-1001',
@@ -15,6 +25,10 @@ class _RepOrdersScreenState extends State<RepOrdersScreen> {
       phone: '0790001111',
       status: 'جديد',
       total: 35.0,
+      items: [
+        _OrderItem(name: 'Front Full', qty: 2),
+        _OrderItem(name: 'Camera Lens', qty: 1),
+      ],
     ),
     _MockOrder(
       id: 'ORD-1002',
@@ -22,6 +36,9 @@ class _RepOrdersScreenState extends State<RepOrdersScreen> {
       phone: '0790002222',
       status: 'تم التسليم',
       total: 18.5,
+      items: [
+        _OrderItem(name: 'Back Cover', qty: 1),
+      ],
     ),
     _MockOrder(
       id: 'ORD-1003',
@@ -29,8 +46,42 @@ class _RepOrdersScreenState extends State<RepOrdersScreen> {
       phone: '0790003333',
       status: 'ملغي',
       total: 52.0,
+      items: [
+        _OrderItem(name: 'Front Shell', qty: 2),
+        _OrderItem(name: 'UV', qty: 1),
+      ],
     ),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _notifyLowStock();
+  }
+
+  List<String> _missingForOrder(_MockOrder order) {
+    final List<String> missing = [];
+    for (final item in order.items) {
+      final available = _stock[item.name] ?? 0;
+      if (available < item.qty) {
+        missing.add('${item.name} (ناقص ${item.qty - available})');
+      }
+    }
+    return missing;
+  }
+
+  void _notifyLowStock() {
+    for (final order in _orders) {
+      final missing = _missingForOrder(order);
+      if (missing.isNotEmpty) {
+        RepStore.addLowStockNotification(
+          orderId: order.id,
+          customer: order.customer,
+          missingItems: missing,
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -46,6 +97,7 @@ class _RepOrdersScreenState extends State<RepOrdersScreen> {
         itemBuilder: (context, index) {
           final order = _orders[index];
           final bool canDeliver = order.status == 'جديد';
+          final missing = _missingForOrder(order);
           return Container(
             margin: const EdgeInsets.only(bottom: 12),
             padding: const EdgeInsets.all(12),
@@ -105,6 +157,13 @@ class _RepOrdersScreenState extends State<RepOrdersScreen> {
                   'الإجمالي: ${order.total.toStringAsFixed(2)} JOD',
                   style: const TextStyle(color: Colors.white),
                 ),
+                if (missing.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    'نقص مخزون: ${missing.join('، ')}',
+                    style: const TextStyle(color: Colors.orangeAccent),
+                  ),
+                ],
                 if (canDeliver) ...[
                   const SizedBox(height: 12),
                   SizedBox(
@@ -144,12 +203,24 @@ class _MockOrder {
   final String phone;
   String status;
   final double total;
+  final List<_OrderItem> items;
 
-  const _MockOrder({
+  _MockOrder({
     required this.id,
     required this.customer,
     required this.phone,
     required this.status,
     required this.total,
+    required this.items,
+  });
+}
+
+class _OrderItem {
+  final String name;
+  final int qty;
+
+  const _OrderItem({
+    required this.name,
+    required this.qty,
   });
 }
