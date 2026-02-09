@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../services/api_service.dart';
 import '../../core/app_strings.dart';
+import '../../data/models/representative_model.dart';
 import 'main_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -16,12 +18,99 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
   final _addressController = TextEditingController();
+  final _machineTypeController = TextEditingController();
+  final _machineSerialController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
   bool _isLoading = false;
   String? _error;
   bool _passwordVisible = false;
   bool _confirmPasswordVisible = false;
+  String _machineOwnership = 'owner';
+  bool _loadingReps = false;
+  List<Representative> _representatives = [];
+  int? _selectedRepresentativeId;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRepresentatives();
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    _phoneController.dispose();
+    _addressController.dispose();
+    _machineTypeController.dispose();
+    _machineSerialController.dispose();
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadRepresentatives() async {
+    setState(() => _loadingReps = true);
+    try {
+      final reps = await ApiService().getRepresentatives();
+      if (!mounted) return;
+      setState(() {
+        _representatives = reps;
+        _loadingReps = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadingReps = false);
+    }
+  }
+
+  Widget _buildRepresentativeDropdown() {
+    final List<Representative> list = _representatives.isEmpty
+        ? const [
+            Representative(id: 1, name: 'مندوب 1', nameAr: 'مندوب 1', nameEn: ''),
+            Representative(id: 2, name: 'مندوب 2', nameAr: 'مندوب 2', nameEn: ''),
+            Representative(id: 3, name: 'مندوب 3', nameAr: 'مندوب 3', nameEn: ''),
+          ]
+        : _representatives;
+
+    return DropdownButtonFormField<int>(
+      value: _selectedRepresentativeId,
+      items: list
+          .map(
+            (rep) => DropdownMenuItem(
+              value: rep.id,
+              child: Text(rep.displayName),
+            ),
+          )
+          .toList(),
+      onChanged: (value) {
+        setState(() => _selectedRepresentativeId = value);
+      },
+      dropdownColor: const Color(0xFF1E1E1E),
+      decoration: InputDecoration(
+        labelText: AppStrings.of(context, 'select_representative'),
+        labelStyle: const TextStyle(color: Colors.grey),
+        filled: true,
+        fillColor: const Color(0xFF1E1E1E),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+        prefixIcon: const Icon(
+          Icons.badge,
+          color: Color(0xFF00FF88),
+        ),
+      ),
+      style: const TextStyle(color: Colors.white),
+      validator: (value) {
+        if (list.isNotEmpty && value == null) {
+          return AppStrings.of(context, 'error_generic');
+        }
+        return null;
+      },
+    );
+  }
 
   Future<void> _register() async {
     if (!_formKey.currentState!.validate()) {
@@ -38,6 +127,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final email = _emailController.text.trim();
       final phone = _phoneController.text.trim();
       final address = _addressController.text.trim();
+      final machineType = _machineTypeController.text.trim();
+      final machineSerial = _machineSerialController.text.trim();
       final pass = _passwordController.text.trim();
       final confirmPass = _confirmPasswordController.text.trim();
 
@@ -48,6 +139,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
         address,
         pass,
         confirmPass,
+        machineType: machineType,
+        machineSerial: machineSerial,
+        machineOwnership: _machineOwnership,
+        representativeId: _selectedRepresentativeId,
       );
 
       if (response.success) {
@@ -211,6 +306,135 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
                 const SizedBox(height: 16),
 
+                // Machine Type
+                TextFormField(
+                  controller: _machineTypeController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: AppStrings.of(context, 'machine_type'),
+                    labelStyle: const TextStyle(color: Colors.grey),
+                    filled: true,
+                    fillColor: const Color(0xFF1E1E1E),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                    prefixIcon: const Icon(
+                      Icons.precision_manufacturing,
+                      color: Color(0xFF00FF88),
+                    ),
+                  ),
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return AppStrings.of(context, 'error_generic');
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+
+                // Representative
+                if (_loadingReps)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16.0),
+                    child: Row(
+                      children: [
+                        const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        const SizedBox(width: 12),
+                        Text(
+                          AppStrings.of(context, 'loading_representatives'),
+                          style: const TextStyle(color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  _buildRepresentativeDropdown(),
+                const SizedBox(height: 16),
+
+                // Machine Serial
+                TextFormField(
+                  controller: _machineSerialController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: AppStrings.of(context, 'machine_serial'),
+                    labelStyle: const TextStyle(color: Colors.grey),
+                    filled: true,
+                    fillColor: const Color(0xFF1E1E1E),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                    prefixIcon: const Icon(
+                      Icons.confirmation_number,
+                      color: Color(0xFF00FF88),
+                    ),
+                    suffixIcon: IconButton(
+                      icon: const Icon(
+                        Icons.qr_code_scanner,
+                        color: Colors.grey,
+                      ),
+                      onPressed: () async {
+                        final String? scanned = await Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (context) => const _SerialScanScreen(),
+                          ),
+                        );
+                        if (scanned != null && scanned.isNotEmpty) {
+                          _machineSerialController.text = scanned;
+                        }
+                      },
+                    ),
+                  ),
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return AppStrings.of(context, 'error_generic');
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+
+                // Machine Ownership
+                DropdownButtonFormField<String>(
+                  value: _machineOwnership,
+                  items: [
+                    DropdownMenuItem(
+                      value: 'owner',
+                      child: Text(AppStrings.of(context, 'ownership_owner')),
+                    ),
+                    DropdownMenuItem(
+                      value: 'rent',
+                      child: Text(AppStrings.of(context, 'ownership_rent')),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() => _machineOwnership = value);
+                  },
+                  dropdownColor: const Color(0xFF1E1E1E),
+                  decoration: InputDecoration(
+                    labelText: AppStrings.of(context, 'machine_ownership'),
+                    labelStyle: const TextStyle(color: Colors.grey),
+                    filled: true,
+                    fillColor: const Color(0xFF1E1E1E),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                    prefixIcon: const Icon(
+                      Icons.home_work,
+                      color: Color(0xFF00FF88),
+                    ),
+                  ),
+                  style: const TextStyle(color: Colors.white),
+                ),
+                const SizedBox(height: 16),
+
                 // Password
                 TextFormField(
                   controller: _passwordController,
@@ -326,6 +550,72 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _SerialScanScreen extends StatefulWidget {
+  const _SerialScanScreen();
+
+  @override
+  State<_SerialScanScreen> createState() => _SerialScanScreenState();
+}
+
+class _SerialScanScreenState extends State<_SerialScanScreen> {
+  final MobileScannerController _controller = MobileScannerController();
+  bool _found = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        title: const Text('Scan Serial'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.flash_on),
+            onPressed: () => _controller.toggleTorch(),
+          ),
+          IconButton(
+            icon: const Icon(Icons.cameraswitch),
+            onPressed: () => _controller.switchCamera(),
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          MobileScanner(
+            controller: _controller,
+            onDetect: (capture) {
+              if (_found) return;
+              final barcode =
+                  capture.barcodes.isNotEmpty ? capture.barcodes.first : null;
+              final raw = barcode?.rawValue?.trim();
+              if (raw != null && raw.isNotEmpty) {
+                _found = true;
+                Navigator.of(context).pop(raw);
+              }
+            },
+          ),
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              child: const Text(
+                'وجّه الكاميرا على QR أو Barcode',
+                style: TextStyle(color: Colors.white70),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

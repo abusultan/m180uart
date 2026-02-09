@@ -4,6 +4,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/models/auth_response.dart';
 import '../data/models/product_models.dart';
+import '../data/models/representative_model.dart';
 
 class ApiService {
   static final ApiService _instance = ApiService._internal();
@@ -97,19 +98,38 @@ class ApiService {
     String phone,
     String address,
     String password,
-    String passwordConfirmation,
-  ) async {
+    String passwordConfirmation, {
+    String? machineType,
+    String? machineSerial,
+    String? machineOwnership,
+    int? representativeId,
+  }) async {
     try {
+      final Map<String, dynamic> payload = {
+        'name': name,
+        'email': email,
+        'phone': phone,
+        'address': address,
+        'password': password,
+        'password_confirmation': passwordConfirmation,
+      };
+
+      if (machineType != null && machineType.isNotEmpty) {
+        payload['machine_type'] = machineType;
+      }
+      if (machineSerial != null && machineSerial.isNotEmpty) {
+        payload['machine_serial'] = machineSerial;
+      }
+      if (machineOwnership != null && machineOwnership.isNotEmpty) {
+        payload['machine_ownership'] = machineOwnership;
+      }
+      if (representativeId != null) {
+        payload['representative_id'] = representativeId;
+      }
+
       final response = await _dio.post(
         'register',
-        data: FormData.fromMap({
-          'name': name,
-          'email': email,
-          'phone': phone,
-          'address': address,
-          'password': password,
-          'password_confirmation': passwordConfirmation,
-        }),
+        data: FormData.fromMap(payload),
       );
 
       final loginResponse = LoginResponse.fromJson(response.data);
@@ -131,6 +151,38 @@ class ApiService {
   }
 
   // --- Products ---
+
+  Future<List<Representative>> getRepresentatives() async {
+    const endpoints = ['representatives', 'mandobs', 'reps'];
+    for (final endpoint in endpoints) {
+      try {
+        final response = await _dio.get(endpoint);
+
+        dynamic rawData = response.data;
+        if (rawData is Map && rawData['success'] == true) {
+          rawData = rawData['data'];
+        } else if (rawData is Map && rawData.containsKey('data')) {
+          rawData = rawData['data'];
+        }
+
+        final List list;
+        if (rawData is Map && rawData.containsKey('data')) {
+          list = rawData['data'];
+        } else if (rawData is List) {
+          list = rawData;
+        } else {
+          list = [];
+        }
+
+        if (list.isNotEmpty) {
+          return list.map((e) => Representative.fromJson(e)).toList();
+        }
+      } catch (_) {
+        // Try next endpoint
+      }
+    }
+    return [];
+  }
 
   Future<List<Category>> getCategories() async {
     try {
