@@ -36,6 +36,17 @@ class EncryptionUtil {
     return val & MASK_32;
   }
 
+  /// PASS_U32 validation (Upprinting)
+  /// Corresponds to PrintUtil.Cmd_DePassU32
+  static int getPassU32Expected(int seed) {
+    int val = seed & MASK_32;
+    val = (val + 908153991) & MASK_32;
+    val = (val ^ 1092948257) & MASK_32;
+    val = (val - 1361593975) & MASK_32;
+    val = (val ^ 309809476) & MASK_32;
+    return val & MASK_32;
+  }
+
   /// Old V1
   /// Corresponds to User's 'handshakeOldV1'
   static int getHandshakeOldV1(int serverValue) {

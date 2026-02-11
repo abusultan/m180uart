@@ -501,6 +501,9 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       }
       if (!mounted) return;
 
+      final isPltMachine = _usesPltFormat();
+      final isPhonefilmMode = _bluetooth.lastHandshakeMode == 'phonefilm';
+
       setState(() => _status = AppStrings.of(context, 'status_init_cut'));
       // 1. Clear Buffer
       // Use ;;; instead of ;RCBM; to avoid resetting the machine/auth state.
@@ -520,16 +523,16 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       if (!mounted) return;
 
       // 3. Set Params (speed/pressure)
-      await _bluetooth.write("BD:4,$_defaultSpeed;");
-      await _bluetooth.write("BD:3,$_defaultPressure;");
-      await Future.delayed(const Duration(milliseconds: 200));
+      if (!isPhonefilmMode) {
+        await _bluetooth.write("BD:4,$_defaultSpeed;");
+        await _bluetooth.write("BD:3,$_defaultPressure;");
+        await Future.delayed(const Duration(milliseconds: 200));
+      }
 
       // 4. Send File Data
       setState(() => _status = AppStrings.of(context, 'status_sending_data'));
 
       // Determine machine type from serial
-      final isPltMachine = _usesPltFormat();
-
       List<int> bytesToSend;
 
       if (isPltMachine) {
@@ -551,9 +554,24 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         );
       }
 
+      if (!isPltMachine && isPhonefilmMode) {
+        bytesToSend = CutFileTransformer.applyPhonefilmSpeedPressure(
+          inputBytes: bytesToSend,
+          speed: _defaultSpeed,
+          pressure: _defaultPressure,
+        );
+      }
+
       if (isPltMachine) {
-        // DQ/DX/LH: slower, acknowledged sends to avoid buffer overflow on large files
-        const int blockSize = 1024;
+        // Upprint-style: send the full PLT payload in one write after handshake.
+        await _bluetooth.writeBytes(
+          bytesToSend,
+          chunkSize: bytesToSend.length,
+          packetDelayMs: 0,
+        );
+      } else {
+        final blockSize = 2048;
+        final delayMs = isPhonefilmMode ? 400 : 50;
         int offset = 0;
         while (offset < bytesToSend.length) {
           if (!mounted) return;
@@ -562,26 +580,13 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
           final chunk = bytesToSend.sublist(offset, end);
           await _bluetooth.writeBytes(
             chunk,
-            forceWithResponse: true,
-            chunkSize: 20,
-            packetDelayMs: 60,
+            chunkSize: chunk.length,
+            packetDelayMs: 0,
           );
-          await Future.delayed(const Duration(milliseconds: 200));
+          if (delayMs > 0) {
+            await Future.delayed(Duration(milliseconds: delayMs));
+          }
           offset = end;
-        }
-      } else {
-        int chunkSize = 2048;
-        int offset = 0;
-        while (offset < bytesToSend.length) {
-          if (!mounted) return; // Check cancel
-          int end = offset + chunkSize;
-          if (end > bytesToSend.length) end = bytesToSend.length;
-          List<int> chunk = bytesToSend.sublist(offset, end);
-
-          await _bluetooth.writeBytes(chunk);
-          // BluetoothService already has a small delay, but we add a bit more for large file safety tasks
-          await Future.delayed(const Duration(milliseconds: 50));
-          offset += chunkSize;
         }
       }
 
@@ -849,6 +854,10 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   }
 
   Future<bool> _performHandshakeSync() async {
+    if (_usesPltFormat()) {
+      return await _bluetooth.performPrintHandshakeDQ();
+    }
+
     final completer = Completer<bool>();
 
     final handshake = MachineHandshake(

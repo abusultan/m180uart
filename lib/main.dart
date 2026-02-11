@@ -12,6 +12,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await ApiService.initialize();
   runApp(
     ChangeNotifierProvider(
       create: (context) => LanguageProvider(),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../services/cut_settings_service.dart';
 import '../../services/bluetooth_service.dart';
+import '../../services/app_settings_service.dart';
 
 Future<double?> showAngleDialog(BuildContext context, double currentValue) async {
   final controller = TextEditingController(
@@ -57,6 +58,7 @@ class CutSettingsScreen extends StatefulWidget {
 class _CutSettingsScreenState extends State<CutSettingsScreen> {
   final CutSettingsService _settings = CutSettingsService();
   final CutterBluetoothService _bluetooth = CutterBluetoothService();
+  final AppSettingsService _appSettings = AppSettingsService();
 
   bool _loading = true;
   int _speed = CutSettingsService.defaultSpeed;
@@ -146,6 +148,17 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
     await _settings.setAngleValue(value);
   }
 
+  Future<void> _openWifiSettings() async {
+    final ok = await _appSettings.openWifiSettings(autoReturn: true, timeoutSeconds: 30);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to open Wi-Fi settings.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
 
   Future<void> _showAngleDialog() async {
     final result = await showAngleDialog(context, _angleValue);
@@ -257,6 +270,23 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
                       side: const BorderSide(color: Color(0xFF00FF88)),
                     ),
                     child: Text('Angle: ${_angleValue.toStringAsFixed(1)}°'),
+                  ),
+                  const SizedBox(height: 20),
+                  ElevatedButton.icon(
+                    onPressed: _openWifiSettings,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2A2A2A),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: const Icon(Icons.wifi),
+                    label: const Text(
+                      'Wi-Fi Settings',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
                   ),
                   const SizedBox(height: 20),
                   ElevatedButton(

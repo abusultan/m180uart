@@ -214,6 +214,44 @@ class CutFileTransformer {
     return latin1.encode(rebuilt);
   }
 
+  static List<int> applyPhonefilmSpeedPressure({
+    required List<int> inputBytes,
+    required int speed,
+    required int pressure,
+  }) {
+    if (speed <= 0 && pressure <= 0) return inputBytes;
+
+    String text;
+    try {
+      text = latin1.decode(inputBytes);
+    } catch (_) {
+      return inputBytes;
+    }
+
+    if (!text.contains('IN')) return inputBytes;
+
+    final cmd = _buildPhonefilmCmd(speed, pressure);
+    if (cmd.isEmpty) return inputBytes;
+
+    // Follow PhoneFilm behavior: remove existing IN tokens and re-insert with CMD payload.
+    final rebuilt = 'IN $cmd' + text.replaceAll('IN', '');
+    return latin1.encode(rebuilt);
+  }
+
+  static String _buildPhonefilmCmd(int speed, int pressure) {
+    final sb = StringBuffer();
+    if (speed >= 1) {
+      final s = speed.clamp(1, 4);
+      sb.write('CMD:100,11,$s;');
+    }
+    if (pressure >= 1) {
+      final p = pressure.clamp(1, 5);
+      sb.write('CMD:100,10,$p;');
+    }
+    return sb.toString();
+  }
+
+
 
   static String _prefixOf(String value) {
     if (value.isEmpty) return '';

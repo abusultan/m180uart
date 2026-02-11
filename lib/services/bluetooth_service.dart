@@ -1,7 +1,8 @@
 import 'dart:async';
-import 'api_service.dart';
-import 'package:flutter_blue_plus/flutter_blue_plus.dart' as blue;
+import 'dart:typed_data';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'api_service.dart';
 import '../utils/encryption_util.dart';
 
 class CutterBluetoothService {
@@ -12,24 +13,26 @@ class CutterBluetoothService {
     return _instance;
   }
 
-  CutterBluetoothService._internal();
+  CutterBluetoothService._internal() {
+    _ensureEventStream();
+  }
 
-  blue.BluetoothDevice? _connectedDevice;
-  blue.BluetoothCharacteristic? _writeCharacteristic;
-  blue.BluetoothCharacteristic? _notifyCharacteristic;
+  final MethodChannel _channel = const MethodChannel('serial_port');
+  final EventChannel _eventChannel = const EventChannel('serial_port/events');
 
-  StreamSubscription? _notifySubscription;
+  StreamSubscription? _eventSubscription;
   final _receivedDataController = StreamController<String>.broadcast();
   final _serialUpdateController = StreamController<String?>.broadcast();
   String _autoHandshakeBuffer = "";
   bool _suppressAutoHandshake = false;
 
+  bool _isConnected = false;
+  Object? _connectedDevice;
+
   Stream<String> get receivedDataStream => _receivedDataController.stream;
   Stream<String?> get serialStream => _serialUpdateController.stream;
-  Stream<blue.BluetoothAdapterState> get adapterState =>
-      blue.FlutterBluePlus.adapterState;
 
-  blue.BluetoothDevice? get connectedDevice => _connectedDevice;
+  Object? get connectedDevice => _connectedDevice;
   String? _serialNumber;
   String? get serialNumber => _serialNumber;
   String? _lastHandshakeMode;
@@ -41,7 +44,6 @@ class CutterBluetoothService {
   void setSerialNumber(String? serial) {
     _serialNumber = serial;
     _serialUpdateController.add(serial);
-    // Persist machine type for UI filtering even when not connected
     if (serial != null) {
       _persistLastMachineType(serial);
       _syncDeviceHandshake(serial);
@@ -49,35 +51,23 @@ class CutterBluetoothService {
   }
 
   Future<void> _syncDeviceHandshake(String serial) async {
-    // 1. Try to fetch existing handshake from backend
     final backendHandshake = await ApiService().getDeviceBySerialNumber(serial);
 
     if (backendHandshake != null && backendHandshake.isNotEmpty) {
-      print("Restored handshake from Backend: $backendHandshake");
-      // Found! Cache it so we use it for communication.
-      // We assume isNewVersion=false for generic stored strings unless we know better,
-      // but the cached string is what matters for getSunshinePassword/etc.
-      // Using 'api' as mode to indicate source.
       await cacheSuccessfulHandshake(backendHandshake, false, mode: "api");
     } else {
-      // 2. Not found on backend -> Check Heuristics OR Register local handshake if known
-
-      // Heuristic: If serial looks like DQ/DX/LH, we KNOW the handshake is "DQ"
       final upper = serial.toUpperCase();
       if (upper.startsWith("DQ") ||
           upper.startsWith("DX") ||
           upper.startsWith("LH")) {
-        // This will cache locally AND add to backend via cacheSuccessfulHandshake internal logic
         await cacheSuccessfulHandshake("DQ", false, mode: "heuristic");
       } else {
-        // If no heuristic, check if we already have a handshake from elsewhere
         _registerDeviceWithBackend(serial);
       }
     }
   }
 
   Future<void> _registerDeviceWithBackend(String serial) async {
-    // Try to get handshake from memory or disk
     String? handshake = _successfulAgentType;
     if (handshake == null) {
       handshake = await getCachedHandshake(serial);
@@ -85,10 +75,6 @@ class CutterBluetoothService {
 
     if (handshake != null) {
       ApiService().addDevice(serial, handshake);
-    } else {
-      print(
-        "Skipping addDevice for now: Serial=$serial, but Handshake is unknown",
-      );
     }
   }
 
@@ -97,21 +83,16 @@ class CutterBluetoothService {
       final prefs = await SharedPreferences.getInstance();
       final upper = serial.toUpperCase();
       final isPlt =
-          upper.startsWith("DQ") ||
-          upper.startsWith("DX") ||
-          upper.startsWith("LH");
+          upper.startsWith("DQ") || upper.startsWith("DX") || upper.startsWith("LH");
       await prefs.setBool('last_machine_is_dq', isPlt);
-    } catch (e) {
-      print("Error persisting machine type: $e");
-    }
+    } catch (_) {}
   }
 
   Future<bool?> getLastMachineIsDQ() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       return prefs.getBool('last_machine_is_dq');
-    } catch (e) {
-      print("Error loading machine type: $e");
+    } catch (_) {
       return null;
     }
   }
@@ -134,15 +115,6 @@ class CutterBluetoothService {
 
   void setSuppressAutoHandshake(bool suppress) {
     _suppressAutoHandshake = suppress;
-    print("Auto-Handshake Suppression: $suppress");
-  }
-
-  Future<void> turnOnBluetooth() async {
-    try {
-      await blue.FlutterBluePlus.turnOn();
-    } catch (e) {
-      print("Error turning on Bluetooth: $e");
-    }
   }
 
   // Cache for successful handshake algorithm
@@ -157,24 +129,14 @@ class CutterBluetoothService {
     _successfulAgentType = agentType;
     _successfulIsNewVersion = isNewVersion;
     _lastHandshakeMode = mode;
-    print(
-      "Cached successful handshake (Memory): Agent=$agentType, IsNew=$isNewVersion",
-    );
 
     if (_serialNumber != null) {
       try {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('handshake_algo_$_serialNumber', agentType);
         await prefs.setString('handshake_mode_$_serialNumber', mode);
-        // IsNewVersion is implicitly tied to the algorithm names usually, but let's store it to be safe if needed eventually
-        // For now, simpler to just store the algo string.
-        print("Persisted handshake for $_serialNumber: $agentType");
-
-        // Try registering now that we have handshake and serial
         ApiService().addDevice(_serialNumber!, agentType);
-      } catch (e) {
-        print("Error persisting handshake or adding device: $e");
-      }
+      } catch (_) {}
     }
   }
 
@@ -182,8 +144,7 @@ class CutterBluetoothService {
     try {
       final prefs = await SharedPreferences.getInstance();
       return prefs.getString('handshake_algo_$serial');
-    } catch (e) {
-      print("Error loading cached handshake: $e");
+    } catch (_) {
       return null;
     }
   }
@@ -192,134 +153,52 @@ class CutterBluetoothService {
     try {
       final prefs = await SharedPreferences.getInstance();
       return prefs.getString('handshake_mode_$serial');
-    } catch (e) {
-      print("Error loading handshake mode: $e");
+    } catch (_) {
       return null;
     }
   }
 
-  bool get isConnected =>
-      _connectedDevice != null && _connectedDevice!.isConnected;
+  bool get isConnected => _isConnected;
 
   String? get successfulHandshakeType => _successfulAgentType;
 
-  Future<void> connect(blue.BluetoothDevice device) async {
-    // 1. Disconnect previous if any
-    if (_connectedDevice != null) {
-      await disconnect();
-      // Wait for stack to clear (fix for Android 133 error)
-      await Future.delayed(const Duration(milliseconds: 500));
+  Future<void> connect({String? portPath, int baud = 115200}) async {
+    _ensureEventStream();
+    final candidates = <String>[];
+    if (portPath != null && portPath.isNotEmpty) {
+      candidates.add(portPath);
+    } else {
+      candidates.addAll(['/dev/ttyS1', '/dev/ttyS0']);
     }
 
-    // 2. Connect
-    // 'autoConnect: false' helps with stability on some Android devices
-    await device.connect(autoConnect: false, license: blue.License.free);
-    _connectedDevice = device;
-
-    // 3. Discover Services
-    List<blue.BluetoothService> services = await device.discoverServices();
-    print("Discovered ${services.length} services");
-
-    // 4. Find Characteristic
-    List<blue.BluetoothCharacteristic> candidates = [];
-
-    for (var service in services) {
-      print("Service: ${service.uuid}");
-      for (var characteristic in service.characteristics) {
-        String props = "";
-        if (characteristic.properties.read) props += "R";
-        if (characteristic.properties.write) props += "W";
-        if (characteristic.properties.writeWithoutResponse) props += "w";
-        if (characteristic.properties.notify) props += "N";
-        if (characteristic.properties.indicate) props += "I";
-
-        print("  Char: ${characteristic.uuid} [$props]");
-
-        // We look for a characteristic that supports BOTH Write (or WriteWithoutResponse) AND Notify
-        if ((characteristic.properties.write ||
-                characteristic.properties.writeWithoutResponse) &&
-            characteristic.properties.notify) {
-          candidates.add(characteristic);
-        }
-      }
-    }
-
-    if (candidates.isNotEmpty) {
-      // Logic to pick the best candidate
-      // 1. Prefer Custom UUIDs (usually long 128-bit or specific 16-bit like FFE1)
-      // 2. Avoid Standard UUIDs (0000xxxx-0000-1000-8000-00805f9b34fb) if possible, especially 2a07 (Tx Power)
-
-      _writeCharacteristic = candidates.first; // Default fallback
-      _notifyCharacteristic = candidates.first;
-
-      for (var c in candidates) {
-        String uuid = c.uuid.toString().toLowerCase();
-        // Check for common UART UUIDs or non-standard ones
-        if (uuid.contains("ffe1") ||
-            uuid.contains("6e40") ||
-            !uuid.contains("0000-1000-8000-00805f9b34fb")) {
-          print("Selected Custom/UART Characteristic: $uuid");
-          _writeCharacteristic = c;
-          _notifyCharacteristic = c;
-          break; // Found a good one
-        }
-      }
-
-      // If we didn't find a "Good" one, check if we have multiple and one of them is NOT 2a07
-      if (_writeCharacteristic!.uuid.toString().contains("2a07") &&
-          candidates.length > 1) {
-        for (var c in candidates) {
-          if (!c.uuid.toString().contains("2a07")) {
-            print("Avoiding 2a07, selecting: ${c.uuid}");
-            _writeCharacteristic = c;
-            _notifyCharacteristic = c;
-            break;
-          }
-        }
-      }
-
-      print(
-        "Final Selection -> Write: ${_writeCharacteristic!.uuid}, Notify: ${_notifyCharacteristic!.uuid}",
-      );
-    }
-
-    if (_writeCharacteristic == null || _notifyCharacteristic == null) {
-      throw Exception("Could not find suitable UART characteristics");
-    }
-
-    // 5. Subscribe to notifications
-    if (_notifyCharacteristic != null) {
-      print("Setting up notification listener...");
-
-      // Listen FIRST to avoid missing data
-      _notifySubscription = _notifyCharacteristic!.onValueReceived.listen((
-        value,
-      ) {
-        print("Raw BLE Data Received (${value.length} bytes): $value");
-        _onDataReceived(value);
-      });
-
-      // Then Enable
-      print("Enabling notifications on ${_notifyCharacteristic!.uuid}...");
+    Object? lastError;
+    for (final path in candidates) {
       try {
-        await _notifyCharacteristic!.setNotifyValue(true);
-        print("Notifications enabled.");
+        final ok = await _channel.invokeMethod<bool>('open', {
+          'path': path,
+          'baud': baud,
+        });
+        if (ok == true) {
+          _isConnected = true;
+          _connectedDevice = Object();
+          return;
+        }
       } catch (e) {
-        print("Warning: Failed to enable notifications (likely Code 10): $e");
-        // Proceed anyway, as some devices work without explicit enable or throw false errors
+        lastError = e;
       }
     }
+
+    throw Exception('Failed to open serial port' + (lastError != null ? ': $lastError' : ''));
   }
 
   Future<void> disconnect() async {
-    _notifySubscription?.cancel();
-    _writeCharacteristic = null;
-    _notifyCharacteristic = null;
-    if (_connectedDevice != null) {
-      await _connectedDevice!.disconnect();
-    }
+    _eventSubscription?.cancel();
+    _eventSubscription = null;
+    try {
+      await _channel.invokeMethod('close');
+    } catch (_) {}
+    _isConnected = false;
     _connectedDevice = null;
-    // Clear session-specific data
     _serialNumber = null;
     _successfulAgentType = null;
     _successfulIsNewVersion = null;
@@ -329,24 +208,8 @@ class CutterBluetoothService {
   }
 
   Future<void> write(String data) async {
-    if (_writeCharacteristic == null) throw Exception("Not connected");
-    print("[BLE TX] Sending: $data");
-
-    List<int> bytes = data.codeUnits;
-    int chunkSize = 20; // Safe BLE default, can be higher if MTU negotiated
-
-    for (int i = 0; i < bytes.length; i += chunkSize) {
-      int end = (i + chunkSize < bytes.length) ? i + chunkSize : bytes.length;
-      List<int> chunk = bytes.sublist(i, end);
-
-      if (_writeCharacteristic!.properties.writeWithoutResponse) {
-        await _writeCharacteristic!.write(chunk, withoutResponse: true);
-      } else {
-        await _writeCharacteristic!.write(chunk);
-      }
-      // Small delay to prevent flooding
-      await Future.delayed(const Duration(milliseconds: 20));
-    }
+    if (!_isConnected) throw Exception("Not connected");
+    await _channel.invokeMethod('write', {'data': data});
   }
 
   Future<void> writeBytes(
@@ -355,64 +218,155 @@ class CutterBluetoothService {
     int chunkSize = 20,
     int packetDelayMs = 20,
   }) async {
-    if (_writeCharacteristic == null) throw Exception("Not connected");
-
+    if (!_isConnected) throw Exception("Not connected");
+    // Chunking is handled in Dart to keep behavior consistent.
     for (int i = 0; i < bytes.length; i += chunkSize) {
       int end = (i + chunkSize < bytes.length) ? i + chunkSize : bytes.length;
       List<int> chunk = bytes.sublist(i, end);
-
-      if (!forceWithResponse &&
-          _writeCharacteristic!.properties.writeWithoutResponse) {
-        await _writeCharacteristic!.write(chunk, withoutResponse: true);
-      } else {
-        await _writeCharacteristic!.write(chunk);
+      await _channel.invokeMethod('writeBytes', {'bytes': Uint8List.fromList(chunk)});
+      if (packetDelayMs > 0) {
+        await Future.delayed(Duration(milliseconds: packetDelayMs));
       }
-      // Small delay to prevent flooding
-      await Future.delayed(Duration(milliseconds: packetDelayMs));
     }
   }
 
-  void _onDataReceived(List<int> bytes) {
-    try {
-      String data = String.fromCharCodes(bytes);
-      print("[BLE RX] $data");
+  Future<bool> performPrintHandshakeDQ({
+    Duration challengeTimeout = const Duration(seconds: 3),
+    Duration ackTimeout = const Duration(seconds: 1),
+  }) async {
+    if (!_isConnected) return false;
+    _ensureEventStream();
+    setSuppressAutoHandshake(true);
 
-      // Buffering for internal protocol handling
-      _autoHandshakeBuffer += data;
+    final completer = Completer<bool>();
+    String buffer = "";
+    bool handshakeSent = false;
+    Timer? challengeTimer;
+    Timer? ackTimer;
 
-      // Process complete messages
-      while (_autoHandshakeBuffer.contains(";")) {
-        int endIndex = _autoHandshakeBuffer.indexOf(";");
-        String message = _autoHandshakeBuffer.substring(0, endIndex + 1);
-        _autoHandshakeBuffer = _autoHandshakeBuffer.substring(endIndex + 1);
+    late StreamSubscription sub;
+    void finish(bool ok) {
+      if (!completer.isCompleted) {
+        completer.complete(ok);
+      }
+    }
 
-        // Clean up message
-        message = message.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), '');
+    sub = receivedDataStream.listen((data) {
+      buffer += data;
+      while (buffer.contains(";")) {
+        final end = buffer.indexOf(";");
+        var msg = buffer.substring(0, end + 1);
+        buffer = buffer.substring(end + 1);
 
-        // ALWAYS-ON HANDSHAKE LISTENER
-        // Requirement: Respond to RCMD=11 if we have a successful cache OR if not suppressed.
-        if (message.contains("RCMD=11,")) {
-          if (!_suppressAutoHandshake) {
-            print("Auto-Responding to challenge: $message");
-            _handleAutoHandshake(message);
-          } else {
-            print("Auto-Handshake suppressed for message: $message");
-          }
+        msg = msg.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), '').trim();
+        if (msg.isEmpty) continue;
+
+        if (msg.contains("RCMD=10,1")) {
+          finish(false);
+          return;
+        }
+        if (msg.contains("RCMD=12,0")) {
+          finish(true);
+          return;
+        }
+        if (msg.contains("RCMD=12,1")) {
+          finish(false);
+          return;
+        }
+
+        final challenge = _extractChallengeFromMessage(msg);
+        if (challenge != null && !handshakeSent) {
+          handshakeSent = true;
+          challengeTimer?.cancel();
+          final password = EncryptionUtil.getDQHandshake(challenge);
+          write("BD:12,$password;");
+          ackTimer?.cancel();
+          ackTimer = Timer(ackTimeout, () {
+            finish(true);
+          });
         }
       }
+    });
 
-      // Clean up the data for UI subscribers
-      data = data.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), '');
-      _receivedDataController.add(data);
-    } catch (e) {
-      print("Error decoding RX data: $e");
+    challengeTimer = Timer(challengeTimeout, () {
+      if (!handshakeSent) finish(false);
+    });
+
+    bool ok;
+    try {
+      await write("BD:10;");
+      ok = await completer.future.timeout(
+        challengeTimeout + ackTimeout + const Duration(seconds: 2),
+        onTimeout: () => false,
+      );
+    } catch (_) {
+      ok = false;
+    } finally {
+      await sub.cancel();
+      challengeTimer?.cancel();
+      ackTimer?.cancel();
+      setSuppressAutoHandshake(false);
     }
+    return ok;
+  }
+
+  int? _extractChallengeFromMessage(String msg) {
+    try {
+      if (msg.contains("RCMD=11,")) {
+        int start = msg.indexOf("RCMD=11,") + 8;
+        int end = msg.indexOf(";", start);
+        if (end == -1) end = msg.length;
+        return int.tryParse(msg.substring(start, end).trim());
+      }
+      if (msg.startsWith("11,")) {
+        final parts = msg.replaceAll(";", "").split(',');
+        if (parts.length >= 2) return int.tryParse(parts[1].trim());
+      }
+      final idx = msg.indexOf(",11,");
+      if (idx != -1) {
+        final tail = msg.substring(idx + 4).replaceAll(";", "");
+        final parts = tail.split(',');
+        if (parts.isNotEmpty) return int.tryParse(parts[0].trim());
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  void _ensureEventStream() {
+    if (_eventSubscription != null) return;
+    _eventSubscription = _eventChannel.receiveBroadcastStream().listen((event) {
+      if (event is String) {
+        _onDataReceived(event);
+      } else if (event is Uint8List) {
+        _onDataReceived(String.fromCharCodes(event));
+      }
+    });
+  }
+
+  void _onDataReceived(String data) {
+    String clean = data;
+    _autoHandshakeBuffer += clean;
+
+    while (_autoHandshakeBuffer.contains(";")) {
+      int endIndex = _autoHandshakeBuffer.indexOf(";");
+      String message = _autoHandshakeBuffer.substring(0, endIndex + 1);
+      _autoHandshakeBuffer = _autoHandshakeBuffer.substring(endIndex + 1);
+
+      message = message.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), '');
+
+      if (message.contains("RCMD=11,")) {
+        if (!_suppressAutoHandshake) {
+          _handleAutoHandshake(message);
+        }
+      }
+    }
+
+    clean = clean.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), '');
+    _receivedDataController.add(clean);
   }
 
   Future<void> _handleAutoHandshake(String data) async {
     try {
-      // Extract Challenge
-      // Format: ...RCMD=11,123456;...
       int start = data.indexOf("RCMD=11,") + 8;
       int end = data.indexOf(";", start);
       if (end == -1) end = data.length;
@@ -420,21 +374,10 @@ class CutterBluetoothService {
       int challenge = int.parse(numStr);
 
       int response;
-
-      // 1. Try memory cache first
       String? cachedAlgo = _successfulAgentType;
 
-      // 2. If memory cache failed, try persistent storage if we have serial
       if (cachedAlgo == null && _serialNumber != null) {
         cachedAlgo = await getCachedHandshake(_serialNumber!);
-        // If found in storage, assume isNew=true (safest default for stored strings unless it is DQ)
-        // Actually, if it's DQ, getSunshinePassword handles it? No, getSunshinePassword handles brands.
-        // But the old logic handled DQ via getDQHandshake.
-        // However, encryption_util.dart handles DQ separately.
-        // We might need to handle DQ specifically here if stored value is "DQ".
-        if (cachedAlgo != null) {
-          print("Restored cached algo from disk: $cachedAlgo");
-        }
       }
 
       if (cachedAlgo != null) {
@@ -445,25 +388,21 @@ class CutterBluetoothService {
         } else if (cachedAlgo == "OLD_V3") {
           response = EncryptionUtil.getHandshakeOldV3(challenge);
         } else {
-          // Default/Brand logic
           response = EncryptionUtil.getSunshinePassword(challenge, cachedAlgo);
         }
       } else {
-        // No cache, try default (most common: HandshakeNew)
-        print("No cached algorithm, using HandshakeNew as default");
-
-        // Optimistically set this as the successful type so we can register it
         if (_successfulAgentType == null) {
           cacheSuccessfulHandshake("HandshakeNew", true, mode: "default");
         }
-
         response = EncryptionUtil.getHandshakeNew(challenge);
       }
 
-      print("Auto-Handshake Challenge: $challenge -> Response: $response");
       write("BD:12,$response;");
-    } catch (e) {
-      print("Auto-Handshake Error: $e");
-    }
+    } catch (_) {}
+  }
+
+  // Kept for compatibility with older UI calls
+  Future<void> turnOnBluetooth() async {
+    // No-op for serial connection
   }
 }

@@ -56,7 +56,7 @@ class _ProductItemsScreenState extends State<ProductItemsScreen> {
 
   Future<void> _loadMachineType() async {
     // If not connected yet, show all items (no filter).
-    if (_bluetooth.connectedDevice == null) {
+    if (!_bluetooth.isConnected) {
       _isPltMachine = null;
     } else {
       final serial = _bluetooth.serialNumber;

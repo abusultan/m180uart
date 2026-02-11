@@ -1,5 +1,9 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/models/auth_response.dart';
@@ -7,13 +11,31 @@ import '../data/models/product_models.dart';
 import '../data/models/representative_model.dart';
 
 class ApiService {
-  static final ApiService _instance = ApiService._internal();
+  static ApiService? _instance;
+  static bool _initialized = false;
+  static Uint8List? _pinnedCert;
+
+  static Future<void> initialize() async {
+    if (_initialized) return;
+    _initialized = true;
+    try {
+      final data = await rootBundle.load('assets/certs/cutter_ca.pem');
+      _pinnedCert = data.buffer.asUint8List();
+    } catch (_) {
+      _pinnedCert = null;
+    }
+    _instance?._configureHttpClientAdapter();
+  }
 
   factory ApiService() {
-    return _instance;
+    return _instance ??= ApiService._internal();
   }
 
   ApiService._internal() {
+    _initDio();
+  }
+
+  void _initDio() {
     _dio = Dio(
       BaseOptions(
         baseUrl: 'https://cutter.irbidbasket.com/api/',
@@ -23,6 +45,8 @@ class ApiService {
         headers: {'Accept': 'application/json'},
       ),
     );
+
+    _configureHttpClientAdapter();
 
     // Add interceptor to inject token
     _dio.interceptors.add(
@@ -34,7 +58,14 @@ class ApiService {
           return handler.next(options);
         },
         onError: (e, handler) {
-          print("API Error: ${e.message} path: ${e.requestOptions.path}");
+          final status = e.response?.statusCode;
+          final method = e.requestOptions.method;
+          final uri = e.requestOptions.uri;
+          final type = e.type;
+          final data = e.response?.data;
+          print(
+            "API Error: type=$type status=$status method=$method uri=$uri message=${e.message} error=${e.error} data=$data",
+          );
           return handler.next(e);
         },
       ),
@@ -44,6 +75,28 @@ class ApiService {
   late Dio _dio;
   String? _token;
   User? _currentUser;
+
+  void _configureHttpClientAdapter() {
+    const allowBadCerts =
+        bool.fromEnvironment('ALLOW_BAD_CERTS', defaultValue: false);
+    final adapter = _dio.httpClientAdapter;
+    if (adapter is IOHttpClientAdapter) {
+      adapter.createHttpClient = () {
+        if (_pinnedCert != null) {
+          final context = SecurityContext(withTrustedRoots: false);
+          context.setTrustedCertificatesBytes(_pinnedCert!);
+          return HttpClient(context: context);
+        }
+        if (kDebugMode && allowBadCerts) {
+          final client = HttpClient();
+          client.badCertificateCallback =
+              (X509Certificate cert, String host, int port) => true;
+          return client;
+        }
+        return HttpClient();
+      };
+    }
+  }
 
   User? get currentUser => _currentUser;
   bool get isLoggedIn => _token != null;

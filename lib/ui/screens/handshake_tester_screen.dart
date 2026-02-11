@@ -95,16 +95,32 @@ class _HandshakeTesterScreenState extends State<HandshakeTesterScreen> {
   void _processMessage(String message) {
     print("📨 Processing: $message");
 
-    // Parse Serial Number
-    if (message.contains("SERIAL:")) {
+    // Parse Serial Number from CBM/PID/RPID or bare serial
+    if (message.contains("CBM=") || message.contains("PID=") || message.contains("RPID=")) {
       try {
-        String serial = message.split("SERIAL:")[1].split(";")[0].trim();
+        final cleaned = message.replaceAll(";", "");
+        final parts = cleaned.split("=");
+        if (parts.length >= 2) {
+          final serial = parts[1].trim();
+          if (serial.isNotEmpty) {
+            setState(() {
+              _serialNumber = serial;
+            });
+          }
+        }
+      } catch (e) {
+        print("❌ Error parsing serial: $e");
+      }
+    } else if ((message.startsWith("SS") ||
+            message.startsWith("DQ") ||
+            message.startsWith("DX") ||
+            message.startsWith("LH")) &&
+        !message.contains("=")) {
+      final serial = message.replaceAll(";", "").trim();
+      if (serial.isNotEmpty) {
         setState(() {
           _serialNumber = serial;
         });
-        print("✅ Serial: $serial");
-      } catch (e) {
-        print("❌ Error parsing serial: $e");
       }
     }
 
@@ -134,8 +150,12 @@ class _HandshakeTesterScreenState extends State<HandshakeTesterScreen> {
   }
 
   void _requestSerialNumber() {
-    _bluetooth.write("SERIAL;");
-    _addLog("TX", "SERIAL;");
+    _bluetooth.write(";RCBM;");
+    _addLog("TX", ";RCBM;");
+    Future.delayed(const Duration(milliseconds: 200), () {
+      _bluetooth.write(";;;RPID;");
+      _addLog("TX", ";;;RPID;");
+    });
   }
 
   void _markCurrentAsSuccess() {

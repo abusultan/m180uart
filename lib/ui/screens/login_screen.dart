@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import '../../services/api_service.dart';
+import '../../services/app_settings_service.dart';
 import '../../core/app_strings.dart';
 import 'register_screen.dart';
 import 'main_screen.dart';
@@ -14,8 +16,12 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  static const bool _bypassLogin =
+      bool.fromEnvironment('BYPASS_LOGIN', defaultValue: false);
+
   final _loginController = TextEditingController();
   final _passwordController = TextEditingController();
+  final AppSettingsService _appSettings = AppSettingsService();
   bool _isLoading = false;
   String? _error;
 
@@ -40,6 +46,18 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  Future<void> _openWifiSettings() async {
+    final ok = await _appSettings.openWifiSettings(autoReturn: true, timeoutSeconds: 30);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تعذر فتح إعدادات الواي فاي'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   Future<void> _login() async {
     setState(() {
       _isLoading = true;
@@ -49,6 +67,24 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       final user = _loginController.text.trim();
       final pass = _passwordController.text.trim();
+
+      if (kDebugMode && _bypassLogin) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('login_user', user.isEmpty ? 'debug' : user);
+        await prefs.setString('login_pass', pass);
+        ApiService().setToken('debug');
+        final isRepMode = prefs.getBool('mock_rep_mode') ?? false;
+
+        if (!mounted) return;
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (context) =>
+                isRepMode ? const RepMainScreen() : const MainScreen(),
+          ),
+          (Route<dynamic> route) => false,
+        );
+        return;
+      }
 
       final response = await ApiService().login(user, pass);
 
@@ -185,6 +221,15 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(height: 16),
+              TextButton.icon(
+                onPressed: _openWifiSettings,
+                icon: const Icon(Icons.wifi, color: Color(0xFF00FF88)),
+                label: const Text(
+                  'إعدادات الواي فاي',
+                  style: TextStyle(color: Color(0xFF00FF88)),
+                ),
+              ),
+              const SizedBox(height: 8),
               TextButton(
                 onPressed: () {
                   Navigator.push(

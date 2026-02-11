@@ -20,6 +20,10 @@ class MachineHandshake {
   bool _dqProtocolTriggered = false;
   String? _detectedSerial;
   bool _manualLockApplied = false;
+  bool _awaitingPassU32 = false;
+  int? _passU32Seed;
+  bool _stateHandshakeAttempted = false;
+  bool _usedStateHandshake = false;
 
   // Systematic Algorithm List
   List<String> _algorithms = [];
@@ -39,6 +43,7 @@ class MachineHandshake {
             ? [forcedAlgorithm]
             : [
               "HANDSHAKE_NEW",
+              "PASS_U32",
               "GENERIC_NEW",
               "DQ",
               "SY",
@@ -64,6 +69,21 @@ class MachineHandshake {
     return s.startsWith("SS") || _isPltSerial(s);
   }
 
+  bool _isPhonefilmAlgo(String algo) {
+    return algo == "HANDSHAKE_NEW" || algo == "OLD_V1" || algo == "OLD_V3";
+  }
+
+  bool _shouldAutoTriggerDQ() {
+    if (_manualLockApplied) {
+      return _algorithms.isNotEmpty && _algorithms.first == "DQ";
+    }
+    if (_awaitingPassU32) return false;
+    if (_algorithms.isNotEmpty && _algorithms[_currentAlgoIndex] == "PASS_U32") {
+      return false;
+    }
+    return true;
+  }
+
   bool get isAuthenticated => _isAuthenticated;
 
   void startHandshake() {
@@ -77,7 +97,11 @@ class MachineHandshake {
     _bd9Sent = false;
     _bd10Sent = false;
     _dqProtocolTriggered = false;
+    _awaitingPassU32 = false;
+    _passU32Seed = null;
     _detectedSerial = null;
+    _stateHandshakeAttempted = false;
+    _usedStateHandshake = false;
     _manualLockApplied = _algorithms.length == 1;
 
     _bluetooth.setSuppressAutoHandshake(true);
@@ -85,15 +109,43 @@ class MachineHandshake {
 
     onStatusUpdate("Initializing...");
 
-    // 1. Initial commands to wake up the machine and get serial
-    _bluetooth.write("RCBM;");
+    // 1. PhoneFilm init sequence (motherboard + wake)
+    _bluetooth.write(";zxcvvbnmasdfghj;");
+    Future.delayed(
+      const Duration(milliseconds: 80),
+      () => _bluetooth.write(";zxcvvbnmasdfgh;"),
+    );
+    final mbRandom = List.generate(10, (_) => Random().nextInt(9) + 1).join();
+    Future.delayed(
+      const Duration(milliseconds: 140),
+      () => _bluetooth.write("BD:9,83,$mbRandom;"),
+    );
+
+    // 2. Initial commands to wake up the machine and get serial
+    _bluetooth.write(";RCBM;");
     Future.delayed(
       const Duration(milliseconds: 200),
-      () => _bluetooth.write("RPID;"),
+      () => _bluetooth.write(";;;RPID;"),
     );
     Future.delayed(
       const Duration(milliseconds: 400),
-      () => _bluetooth.write("SRVER;"),
+      () => _bluetooth.write(";RSVER;"),
+    );
+    Future.delayed(
+      const Duration(milliseconds: 600),
+      () => _bluetooth.write(";RHVER;"),
+    );
+    Future.delayed(
+      const Duration(milliseconds: 800),
+      () => _bluetooth.write(";RMODE;"),
+    );
+    Future.delayed(
+      const Duration(milliseconds: 1000),
+      () => _bluetooth.write(";RPGHEAD;"),
+    );
+    Future.delayed(
+      const Duration(milliseconds: 1200),
+      () => _bluetooth.write(";BD:20;"),
     );
 
     // 2. Targeted Jump (User request: Use what worked before)
@@ -101,8 +153,8 @@ class MachineHandshake {
 
     // 3. Systematic trigger
     Future.delayed(const Duration(milliseconds: 2000), () {
-      if (!_isAuthenticated && !_bd9Sent && !_bd10Sent) {
-        _sendBD9();
+      if (!_isAuthenticated && !_bd9Sent && !_bd10Sent && !_awaitingPassU32) {
+        _sendInitialChallenge();
       }
     });
   }
@@ -152,14 +204,72 @@ class MachineHandshake {
 
     // Watchdog: If no response in 5s, try next algorithm
     _watchdogTimer = Timer(const Duration(seconds: 5), () {
-      print("⏰ Watchdog: No response to BD:9 after 5s. Moving on...");
-      _tryNextAlgorithm();
+      print("⏰ Watchdog: No response to BD:9 after 5s.");
+      final algo = _algorithms[_currentAlgoIndex];
+      if (!_stateHandshakeAttempted && _isPhonefilmAlgo(algo)) {
+        _sendBD10Challenge();
+      } else {
+        print("⏰ Moving on...");
+        _tryNextAlgorithm();
+      }
     });
 
     // 6 digits is more common and compatible with older/Sunshine machines
     String random = List.generate(6, (_) => Random().nextInt(10)).join();
     print("📤 Sending BD:9,$random; (Attempt ${_retryCount + 1})");
     _bluetooth.write("BD:9,$random;");
+  }
+
+  void _sendBD10Challenge() {
+    if (_isAuthenticated) return;
+    _bd10Sent = true;
+    _stateHandshakeAttempted = true;
+    _usedStateHandshake = true;
+    onStatusUpdate("Testing STATE...");
+    _watchdogTimer?.cancel();
+
+    _watchdogTimer = Timer(const Duration(seconds: 5), () {
+      print("⏰ Watchdog: No response to BD:10 after 5s. Moving on...");
+      _tryNextAlgorithm();
+    });
+
+    print("📤 Sending BD:10; (STATE)");
+    _bluetooth.write("BD:10;");
+  }
+
+  void _sendPassU32() {
+    if (_isAuthenticated || _bd10Sent) return;
+    _awaitingPassU32 = true;
+    _bd9Sent = false;
+    onStatusUpdate("Testing PASS_U32...");
+    _watchdogTimer?.cancel();
+
+    _watchdogTimer = Timer(const Duration(seconds: 5), () {
+      print("⏰ Watchdog: No response to PASS_U32 after 5s. Moving on...");
+      _awaitingPassU32 = false;
+      _tryNextAlgorithm();
+    });
+
+    _passU32Seed = Random().nextInt(1000000000);
+    print("📤 Sending BD:9,8,$_passU32Seed; (PASS_U32)");
+    _bluetooth.write("BD:9,8,$_passU32Seed;");
+  }
+
+  void _sendInitialChallenge() {
+    final algo = _algorithms[_currentAlgoIndex];
+    if (algo == "PASS_U32") {
+      _sendPassU32();
+      return;
+    }
+    if (_isPltSerial(_detectedSerial) && _shouldAutoTriggerDQ()) {
+      _triggerDQProtocol();
+      return;
+    }
+    if (_stateHandshakeAttempted && _isPhonefilmAlgo(algo)) {
+      _sendBD10Challenge();
+    } else {
+      _sendBD9();
+    }
   }
 
   void _triggerDQProtocol() {
@@ -266,7 +376,7 @@ class MachineHandshake {
           }
 
           // Fast-track DQ/DX/LH if identified
-          if (_isPltSerial(rawSerial)) {
+          if (_isPltSerial(rawSerial) && _shouldAutoTriggerDQ()) {
             if (!_bd10Sent && !_isAuthenticated) {
               _triggerDQProtocol();
             }
@@ -292,11 +402,41 @@ class MachineHandshake {
             _applyManualPreferenceIfAny(rawSerial);
           }
 
-          if (_isPltSerial(rawSerial)) {
+          if (_isPltSerial(rawSerial) && _shouldAutoTriggerDQ()) {
             if (!_bd10Sent && !_isAuthenticated) {
               _triggerDQProtocol();
             }
           }
+        }
+      }
+    }
+
+    // 1.5 PASS_U32 verification (Upprinting)
+    if (_awaitingPassU32 && _passU32Seed != null) {
+      final actual = _extractPassU32Value(message);
+      if (actual != null) {
+        final expected = EncryptionUtil.getPassU32Expected(_passU32Seed!);
+        if (actual == expected) {
+          _watchdogTimer?.cancel();
+          _awaitingPassU32 = false;
+          _isAuthenticated = true;
+          String winAlgo = _algorithms[_currentAlgoIndex];
+          print("✅ PASS_U32 SUCCESS! Algorithm: $winAlgo");
+          onStatusUpdate("✅ Connected!");
+          _bluetooth.cacheSuccessfulHandshake(
+            winAlgo,
+            true,
+            mode: _manualLockApplied ? "manual" : (_usedStateHandshake ? "phonefilm" : _handshakeMode),
+          );
+          // Optional follow-up used by Upprinting to fetch URL/COMPNO
+          _bluetooth.write("BD:9;");
+          _finishHandshake(true);
+          return;
+        } else {
+          print("❌ PASS_U32 failed. expected=$expected actual=$actual");
+          _awaitingPassU32 = false;
+          _tryNextAlgorithm();
+          return;
         }
       }
     }
@@ -319,7 +459,7 @@ class MachineHandshake {
       _bluetooth.cacheSuccessfulHandshake(
         winAlgo,
         true,
-        mode: _manualLockApplied ? "manual" : _handshakeMode,
+        mode: _manualLockApplied ? "manual" : (_usedStateHandshake ? "phonefilm" : _handshakeMode),
       );
       _finishHandshake(true);
     } else if (message.contains("RCMD=12,1")) {
@@ -373,24 +513,39 @@ class MachineHandshake {
   void _tryNextAlgorithm() {
     _currentAlgoIndex++;
     _retryCount++;
+    _awaitingPassU32 = false;
+    _passU32Seed = null;
+    _stateHandshakeAttempted = false;
+    _usedStateHandshake = false;
 
     if (_currentAlgoIndex < _algorithms.length) {
       _bd9Sent = false;
       _bd10Sent = false;
       Future.delayed(const Duration(milliseconds: 500), () {
         if (_bluetooth.isConnected) {
-          // If we already know it's a DQ, re-trigger DQ protocol
-          if (_isPltSerial(_detectedSerial)) {
-            _triggerDQProtocol();
-          } else {
-            _sendBD9();
-          }
+          _sendInitialChallenge();
         }
       });
     } else {
       print("🚫 All algorithms exhausted.");
       onStatusUpdate("❌ Failed");
       _finishHandshake(false);
+    }
+  }
+
+  int? _extractPassU32Value(String message) {
+    try {
+      var msg = message.replaceAll(";", "").trim();
+      if (!msg.contains("=")) return null;
+      final parts = msg.split("=");
+      if (parts.length < 2) return null;
+      final rhs = parts.sublist(1).join("=").trim();
+      final items = rhs.split(",");
+      if (items.length < 3) return null;
+      final value = items[2].trim();
+      return int.tryParse(value);
+    } catch (_) {
+      return null;
     }
   }
 

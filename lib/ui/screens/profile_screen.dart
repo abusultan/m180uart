@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/app_strings.dart';
+import '../../core/machine_handshake.dart';
 import '../../services/api_service.dart';
 import '../../services/bluetooth_service.dart';
 import '../../providers/language_provider.dart';
@@ -11,6 +13,9 @@ import 'attachments_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
+
+  static const String _testFileUrl =
+      'http://www.cutabc.cn:8091/Userfile/Attach/25032415-1430.plt';
 
   void _requestRepresentative(BuildContext context) {
     final user = ApiService().currentUser;
@@ -100,6 +105,132 @@ class ProfileScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<bool> _performHandshakeSync() async {
+    final completer = Completer<bool>();
+    final cutter = CutterBluetoothService();
+    final handshake = MachineHandshake(
+      cutter,
+      onStatusUpdate: (_) {},
+      onHandshakeComplete: (success) {
+        if (!completer.isCompleted) completer.complete(success);
+      },
+    );
+    handshake.startHandshake();
+    try {
+      return await completer.future.timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => false,
+      );
+    } finally {
+      handshake.dispose();
+    }
+  }
+
+  Future<void> _sendTestFile(BuildContext context) async {
+    final cutter = CutterBluetoothService();
+    if (!cutter.isConnected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('السيريال غير متصل'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+    // Always run handshake before sending to ensure the session is authenticated.
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const AlertDialog(
+        backgroundColor: Color(0xFF1E1E1E),
+        content: Row(
+          children: [
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 16),
+            Expanded(
+              child: Text(
+                'جاري تحميل الملف وإرساله...',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      final serial = cutter.serialNumber?.toUpperCase() ?? '';
+      final isPlt = serial.startsWith("DQ") || serial.startsWith("DX") || serial.startsWith("LH");
+      final ok = isPlt
+          ? await cutter.performPrintHandshakeDQ()
+          : await _performHandshakeSync();
+      if (!ok) {
+        throw Exception('فشل الهاند شيك');
+      }
+
+      final isPhonefilmMode = cutter.lastHandshakeMode == 'phonefilm';
+
+      final file = await ApiService().downloadFile(_testFileUrl);
+      if (file == null) {
+        throw Exception('فشل تنزيل الملف');
+      }
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) {
+        throw Exception('ملف فارغ');
+      }
+
+      if (isPlt) {
+        await cutter.writeBytes(
+          bytes,
+          chunkSize: bytes.length,
+          packetDelayMs: 0,
+        );
+      } else {
+        final blockSize = 2048;
+        final delayMs = isPhonefilmMode ? 400 : 2;
+        int offset = 0;
+        while (offset < bytes.length) {
+          int end = offset + blockSize;
+          if (end > bytes.length) end = bytes.length;
+          final chunk = bytes.sublist(offset, end);
+          await cutter.writeBytes(
+            chunk,
+            chunkSize: chunk.length,
+            packetDelayMs: 0,
+          );
+          if (delayMs > 0) {
+            await Future.delayed(Duration(milliseconds: delayMs));
+          }
+          offset = end;
+        }
+      }
+
+      if (context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم إرسال الملف بنجاح'),
+            backgroundColor: Color(0xFF00FF88),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('فشل الإرسال: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -216,6 +347,24 @@ class ProfileScreen extends StatelessWidget {
                   ),
                 );
               },
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              tileColor: const Color(0xFF1E1E1E),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              leading: const Icon(Icons.send, color: Color(0xFF00FF88)),
+              title: const Text(
+                'إرسال ملف تجريبي للماكينة',
+                style: TextStyle(color: Colors.white),
+              ),
+              subtitle: const Text(
+                'يرسل الملف مباشرة عبر السيريال',
+                style: TextStyle(color: Colors.grey),
+              ),
+              trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+              onTap: () => _sendTestFile(context),
             ),
             const SizedBox(height: 16),
             ListTile(
