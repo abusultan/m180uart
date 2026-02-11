@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Build
 import android.net.NetworkCapabilities
 import android.net.ConnectivityManager
+import android.net.wifi.WifiManager
 import android.content.IntentFilter
 import android.content.Context
 import android.content.BroadcastReceiver
@@ -30,8 +31,10 @@ class MainActivity : FlutterActivity() {
     private val serialManager = SerialPortManager()
     private var wifiReturnReceiver: BroadcastReceiver? = null
     private var wifiReturnTimeout: Runnable? = null
+    private var wifiReturnPoller: Runnable? = null
     private val wifiHandler = Handler(Looper.getMainLooper())
     private var wifiReturnInitialConnected = false
+    private var wifiReturnInitialSsid: String? = null
 
     private fun decodeSvg(bytes: ByteArray): String {
         if (bytes.size >= 2) {
@@ -74,6 +77,18 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun getWifiSsid(): String? {
+        return try {
+            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            val info = wm.connectionInfo ?: return null
+            val raw = info.ssid ?: return null
+            if (raw == "<unknown ssid>") return null
+            raw.trim('"')
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun cleanupWifiAutoReturn() {
         try {
             if (wifiReturnReceiver != null) {
@@ -86,6 +101,10 @@ class MainActivity : FlutterActivity() {
             wifiHandler.removeCallbacks(wifiReturnTimeout!!)
         }
         wifiReturnTimeout = null
+        if (wifiReturnPoller != null) {
+            wifiHandler.removeCallbacks(wifiReturnPoller!!)
+        }
+        wifiReturnPoller = null
     }
 
     private fun returnToApp() {
@@ -98,21 +117,39 @@ class MainActivity : FlutterActivity() {
     private fun setupWifiAutoReturn(timeoutSeconds: Int) {
         cleanupWifiAutoReturn()
         wifiReturnInitialConnected = isNetworkConnected()
+        wifiReturnInitialSsid = getWifiSsid()
 
         wifiReturnReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 val connected = isNetworkConnected()
+                val ssid = getWifiSsid()
+                val wifiChanged = ssid != null && ssid != wifiReturnInitialSsid
                 if (wifiReturnInitialConnected && !connected) {
                     wifiReturnInitialConnected = false
                     return
                 }
-                if (!wifiReturnInitialConnected && connected) {
+                if ((!wifiReturnInitialConnected && connected) || wifiChanged) {
                     cleanupWifiAutoReturn()
                     returnToApp()
                 }
             }
         }
         registerReceiver(wifiReturnReceiver, IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION))
+
+        wifiReturnPoller = object : Runnable {
+            override fun run() {
+                val connected = isNetworkConnected()
+                val ssid = getWifiSsid()
+                val wifiChanged = ssid != null && ssid != wifiReturnInitialSsid
+                if ((!wifiReturnInitialConnected && connected) || wifiChanged) {
+                    cleanupWifiAutoReturn()
+                    returnToApp()
+                    return
+                }
+                wifiHandler.postDelayed(this, 1500L)
+            }
+        }
+        wifiHandler.postDelayed(wifiReturnPoller!!, 1500L)
 
         wifiReturnTimeout = Runnable {
             cleanupWifiAutoReturn()
