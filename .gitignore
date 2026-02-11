@@ -40,6 +40,10 @@ android/app/build/
 ios/Flutter/Generated*.xcconfig
 ios/Flutter/flutter_export_environment*.sh
 
+# Local archives / vendor copies not needed to build
+third_party/
+*.apk
+
 # Symbolication related
 app.*.symbols
 
