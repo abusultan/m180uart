@@ -5,7 +5,7 @@ import '../../data/models/product_models.dart';
 import '../../core/app_strings.dart';
 import 'product_list_screen.dart';
 import 'login_screen.dart';
-import 'scan_screen.dart';
+import 'cut_settings_screen.dart';
 import 'product_items_screen.dart';
 import 'dart:async';
 
@@ -31,10 +31,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<Product> _productSearchResults = [];
   bool _isSearchingProducts = false;
   Timer? _debounce;
+  StreamSubscription<String?>? _serialSub;
+
+  String _safeUrl(String url) => ApiService().normalizeUrl(url);
+
+  int _gridCountForWidth(double width) {
+    if (width >= 1400) return 6;
+    if (width >= 1100) return 5;
+    if (width >= 900) return 4;
+    if (width >= 700) return 3;
+    return 2;
+  }
+
+  double _gridAspectForWidth(double width) {
+    if (width >= 1100) return 1.1;
+    if (width >= 700) return 1.05;
+    return 1.0;
+  }
 
   @override
   void initState() {
     super.initState();
+    _serialSub = CutterBluetoothService().serialStream.listen((_) {
+      if (mounted) setState(() {});
+    });
     if (widget.initialSubCategories != null) {
       _categoriesFuture = Future.value(widget.initialSubCategories);
     } else {
@@ -44,6 +64,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   void dispose() {
+    _serialSub?.cancel();
     _debounce?.cancel();
     super.dispose();
   }
@@ -169,6 +190,53 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return null;
   }
 
+  void _requestRepresentative() {
+    final user = ApiService().currentUser;
+    final repName = user?.representativeName ?? '';
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: Text(
+          AppStrings.of(context, 'request_rep'),
+          style: const TextStyle(color: Colors.white),
+        ),
+        content: Text(
+          repName.isEmpty
+              ? AppStrings.of(context, 'no_rep_found')
+              : '${AppStrings.of(context, 'rep_notification_msg')}$repName',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              AppStrings.of(context, 'cancel'),
+              style: const TextStyle(color: Colors.grey),
+            ),
+          ),
+          if (repName.isNotEmpty)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(AppStrings.of(context, 'notification_sent')),
+                    backgroundColor: const Color(0xFF00FF88),
+                  ),
+                );
+              },
+              child: Text(
+                AppStrings.of(context, 'send'),
+                style: const TextStyle(color: Color(0xFF00FF88)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final serialNumber = CutterBluetoothService().serialNumber;
@@ -215,17 +283,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
         actions: [
           IconButton(
             icon: Icon(
-              Icons.bluetooth,
-              color: isConnected ? const Color(0xFF00FF88) : Colors.grey,
+              Icons.notifications_active,
+              color: const Color(0xFF00FF88),
             ),
-            tooltip: AppStrings.of(context, 'connect_cutter'),
-            onPressed: () async {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const ScanScreen()),
-              );
-              setState(() {}); // Refresh to show connection status
-            },
+            tooltip: AppStrings.of(context, 'request_rep'),
+            onPressed: _requestRepresentative,
           ),
           IconButton(icon: const Icon(Icons.logout), onPressed: _logout),
         ],
@@ -233,62 +295,65 @@ class _DashboardScreenState extends State<DashboardScreen> {
       backgroundColor: const Color(0xFF121212),
       body: !isConnected
           ? Center(
-              child: Padding(
+              child: SingleChildScrollView(
                 padding: const EdgeInsets.all(24.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.bluetooth_disabled,
-                      size: 80,
-                      color: Colors.white54,
-                    ),
-                    const SizedBox(height: 24),
-                    Text(
-                      AppStrings.of(context, 'connect_required_title'),
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 560),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.settings_ethernet,
+                        size: 80,
+                        color: Colors.white54,
                       ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      AppStrings.of(context, 'connect_required_msg'),
-                      style: const TextStyle(
-                        fontSize: 16,
-                        color: Colors.white70,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 32),
-                    ElevatedButton.icon(
-                      onPressed: () async {
-                        await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const ScanScreen(),
-                          ),
-                        );
-                        setState(() {});
-                      },
-                      icon: const Icon(Icons.bluetooth),
-                      label: Text(AppStrings.of(context, 'go_to_connect')),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF00FF88),
-                        foregroundColor: Colors.black,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 24,
-                          vertical: 12,
-                        ),
-                        textStyle: const TextStyle(
-                          fontSize: 16,
+                      const SizedBox(height: 24),
+                      Text(
+                        AppStrings.of(context, 'connect_required_title'),
+                        style: const TextStyle(
+                          fontSize: 20,
                           fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        AppStrings.of(context, 'connect_required_msg'),
+                        style: const TextStyle(
+                          fontSize: 16,
+                          color: Colors.white70,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 32),
+                      ElevatedButton.icon(
+                        onPressed: () async {
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const CutSettingsScreen(),
+                            ),
+                          );
+                          setState(() {});
+                        },
+                        icon: const Icon(Icons.tune),
+                        label: const Text('إعدادات الهاند شيك'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF00FF88),
+                          foregroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 12,
+                          ),
+                          textStyle: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             )
@@ -330,19 +395,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               _searchQuery = ''; // Clear search on refresh
                               if (widget.currentCategoryId != null) {
                                 // Sub-category refreshing
-                                _categoriesFuture = ApiService()
-                                    .getCategories()
-                                    .then((all) {
-                                      final children = _findChildren(
-                                        all,
-                                        widget.currentCategoryId!,
-                                      );
-                                      return children ?? [];
-                                    });
+                                _categoriesFuture =
+                                    ApiService().getCategories().then((all) {
+                                  final children = _findChildren(
+                                    all,
+                                    widget.currentCategoryId!,
+                                  );
+                                  return children ?? [];
+                                });
                               } else {
                                 // Root refreshing
-                                _categoriesFuture = ApiService()
-                                    .getCategories();
+                                _categoriesFuture =
+                                    ApiService().getCategories();
                               }
                             });
                             await _categoriesFuture;
@@ -394,8 +458,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               final filteredCategories = snapshot.data!
                                   .where(
                                     (cat) => cat.name.toLowerCase().contains(
-                                      _searchQuery.toLowerCase(),
-                                    ),
+                                          _searchQuery.toLowerCase(),
+                                        ),
                                   )
                                   .toList();
 
@@ -421,25 +485,36 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 );
                               }
 
-                              return GridView.builder(
-                                padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  0,
-                                  16,
-                                  16,
-                                ),
-                                physics: const AlwaysScrollableScrollPhysics(),
-                                gridDelegate:
-                                    const SliverGridDelegateWithFixedCrossAxisCount(
-                                      crossAxisCount: 2,
+                              return LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final count = _gridCountForWidth(
+                                    constraints.maxWidth,
+                                  );
+                                  final ratio = _gridAspectForWidth(
+                                    constraints.maxWidth,
+                                  );
+                                  return GridView.builder(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      16,
+                                      0,
+                                      16,
+                                      16,
+                                    ),
+                                    physics:
+                                        const AlwaysScrollableScrollPhysics(),
+                                    gridDelegate:
+                                        SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: count,
                                       crossAxisSpacing: 12,
                                       mainAxisSpacing: 12,
-                                      childAspectRatio: 1.0,
+                                      childAspectRatio: ratio,
                                     ),
-                                itemCount: filteredCategories.length,
-                                itemBuilder: (context, index) {
-                                  final cat = filteredCategories[index];
-                                  return _buildCategoryCard(cat);
+                                    itemCount: filteredCategories.length,
+                                    itemBuilder: (context, index) {
+                                      final cat = filteredCategories[index];
+                                      return _buildCategoryCard(cat);
+                                    },
+                                  );
                                 },
                               );
                             },
@@ -465,12 +540,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.3),
+              color: Colors.black.withValues(alpha: 0.3),
               blurRadius: 8,
               offset: const Offset(0, 4),
             ),
           ],
-          border: Border.all(color: Colors.white.withOpacity(0.05)),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -485,14 +560,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
+                      color: Colors.black.withValues(alpha: 0.1),
                       blurRadius: 4,
                       offset: const Offset(0, 2),
                     ),
                   ],
                 ),
                 child: Image.network(
-                  cat.imageUrl,
+                  _safeUrl(cat.imageUrl),
                   fit: BoxFit.contain,
                   errorBuilder: (context, error, stackTrace) {
                     return Icon(
@@ -510,7 +585,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 height: 70,
                 width: 70,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF00FF88).withOpacity(0.1),
+                  color: const Color(0xFF00FF88).withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(16),
                 ),
                 child: Icon(
@@ -573,19 +648,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 ),
               ),
-              SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                sliver: SliverGrid(
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 12,
-                    mainAxisSpacing: 12,
-                    childAspectRatio: 1.0,
-                  ),
-                  delegate: SliverChildBuilderDelegate((context, index) {
-                    return _buildCategoryCard(matchingCategories[index]);
-                  }, childCount: matchingCategories.length),
-                ),
+              SliverLayoutBuilder(
+                builder: (context, constraints) {
+                  final count = _gridCountForWidth(constraints.crossAxisExtent);
+                  final ratio = _gridAspectForWidth(
+                    constraints.crossAxisExtent,
+                  );
+                  return SliverPadding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    sliver: SliverGrid(
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: count,
+                        crossAxisSpacing: 12,
+                        mainAxisSpacing: 12,
+                        childAspectRatio: ratio,
+                      ),
+                      delegate: SliverChildBuilderDelegate((context, index) {
+                        return _buildCategoryCard(matchingCategories[index]);
+                      }, childCount: matchingCategories.length),
+                    ),
+                  );
+                },
               ),
               const SliverToBoxAdapter(child: SizedBox(height: 24)),
             ],
@@ -649,7 +732,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Image.network(
-                            product.image,
+                            _safeUrl(product.image),
                             fit: BoxFit.contain,
                             errorBuilder: (c, e, s) => const Icon(
                               Icons.smartphone,

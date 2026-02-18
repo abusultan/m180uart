@@ -38,7 +38,7 @@ class ApiService {
   void _initDio() {
     _dio = Dio(
       BaseOptions(
-        baseUrl: 'https://cutter.irbidbasket.com/api/',
+        baseUrl: 'https://anti-crash.com/api/',
         // baseUrl: 'http://192.168.1.89:8000/api/',
         connectTimeout: const Duration(seconds: 30),
         receiveTimeout: const Duration(seconds: 30),

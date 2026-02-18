@@ -11,6 +11,7 @@ import java.io.OutputStream;
 
 public class SerialPort {
     private static final String TAG = "SerialPort";
+    private static final String[] SU_CANDIDATES = new String[] {"/system/bin/su", "/system/xbin/su", "/su/bin/su"};
     private static String sSuPath = "/system/bin/su";
     private FileDescriptor mFd;
     private FileInputStream mFileInputStream;
@@ -26,17 +27,34 @@ public class SerialPort {
         }
     }
 
+    private static String resolveSuPath() {
+        File preferred = new File(sSuPath);
+        if (preferred.exists() && preferred.canExecute()) {
+            return preferred.getAbsolutePath();
+        }
+
+        for (String candidate : SU_CANDIDATES) {
+            File f = new File(candidate);
+            if (f.exists() && f.canExecute()) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
     public SerialPort(File device, int baudrate, int flags) throws SecurityException, IOException {
         if (!device.canRead() || !device.canWrite()) {
-            try {
-                Process su = Runtime.getRuntime().exec(sSuPath);
-                su.getOutputStream().write(("chmod 666 " + device.getAbsolutePath() + "\nexit\n").getBytes());
-                if (su.waitFor() != 0 || !device.canRead() || !device.canWrite()) {
-                    throw new SecurityException();
+            final String suPath = resolveSuPath();
+            if (suPath != null) {
+                try {
+                    Process su = Runtime.getRuntime().exec(suPath);
+                    su.getOutputStream().write(("chmod 666 " + device.getAbsolutePath() + "\nexit\n").getBytes());
+                    su.waitFor();
+                } catch (Exception e) {
+                    Log.w(TAG, "chmod via su failed for " + device.getAbsolutePath() + ": " + e.getMessage());
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
-                throw new SecurityException();
+            } else {
+                Log.w(TAG, "su not found; trying direct open for " + device.getAbsolutePath());
             }
         }
         FileDescriptor fd = open(device.getAbsolutePath(), baudrate, flags);

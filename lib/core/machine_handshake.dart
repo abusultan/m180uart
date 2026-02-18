@@ -3,573 +3,589 @@ import 'dart:math';
 import '../services/bluetooth_service.dart';
 import '../utils/encryption_util.dart';
 
-/// Handles the machine handshake protocol by trying all available algorithms in a loop.
+/// PhoneFilm v3.0.1 handshake flow:
+/// 1) getPassWord2
+/// 2) getOldPassWord
+/// 3) getPassWord
 class MachineHandshake {
+  static const String algoSunshine = 'SUNSHINE';
+  static const String algoPassWord2 = 'HANDSHAKE_NEW';
+  static const String algoOldPassWord = 'OLD_V1';
+  static const String algoPassWord = 'OLD_V3';
+  static const String algoRockspace = 'ROCKSPACE_STR';
+  static const String defaultRockspacePid = '12345678901234567890';
+
+  static const List<String> sunshineAlgorithms = [
+    algoPassWord2,
+    algoOldPassWord,
+    algoPassWord,
+  ];
+
+  static const List<String> supportedAlgorithms = [
+    ...sunshineAlgorithms,
+    algoRockspace,
+  ];
+
   final CutterBluetoothService _bluetooth;
   final Function(bool) onHandshakeComplete;
   final Function(String) onStatusUpdate;
   final String _handshakeMode;
-
-  // State variables
-  bool _isAuthenticated = false;
-  int _retryCount = 0;
-  int _currentAlgoIndex = 0;
-  String _messageBuffer = "";
-  bool _bd9Sent = false;
-  bool _bd10Sent = false;
-  bool _dqProtocolTriggered = false;
-  String? _detectedSerial;
-  bool _manualLockApplied = false;
-  bool _awaitingPassU32 = false;
-  int? _passU32Seed;
-  bool _stateHandshakeAttempted = false;
-  bool _usedStateHandshake = false;
-
-  // Systematic Algorithm List
-  List<String> _algorithms = [];
+  final bool _persistOnSuccess;
+  final int _maxRounds;
 
   StreamSubscription? _dataSubscription;
-  Timer? _watchdogTimer;
+  Timer? _challengeTimer;
+  Timer? _ackTimer;
+  final List<Timer> _scheduledTimers = [];
+
+  List<String> _algorithms = List<String>.from(sunshineAlgorithms);
+  int _currentAlgoIndex = 0;
+  int _currentRound = 1;
+  int? _currentChallenge;
+
+  String _messageBuffer = '';
+  bool _awaitingAuthAck = false;
+  bool _isAuthenticated = false;
+  bool _finished = false;
+  _RockspaceState _rockspaceState = _RockspaceState.idle;
+  String? _detectedPid;
+  int _challengeRetryCount = 0;
+  static const int _maxChallengeRetriesPerAlgorithm = 3;
 
   MachineHandshake(
     this._bluetooth, {
     required this.onHandshakeComplete,
     required this.onStatusUpdate,
     String? forcedAlgorithm,
-    String handshakeMode = "auto",
-  }) : _handshakeMode = handshakeMode {
-    _algorithms =
-        forcedAlgorithm != null
-            ? [forcedAlgorithm]
-            : [
-              "HANDSHAKE_NEW",
-              "PASS_U32",
-              "GENERIC_NEW",
-              "DQ",
-              "SY",
-              "STANDARD",
-              "SUNSHINE",
-              "CUTTER",
-              "OLD_V1",
-              "OLD_V3",
-              "DEVIA",
-            ];
-    if (forcedAlgorithm != null) _manualLockApplied = true;
-  }
-
-  bool _isPltSerial(String? serial) {
-    final s = serial?.toUpperCase();
-    if (s == null) return false;
-    return s.startsWith("DQ") || s.startsWith("DX") || s.startsWith("LH");
-  }
-
-  bool _isPrioritySerial(String? serial) {
-    final s = serial?.toUpperCase();
-    if (s == null) return false;
-    return s.startsWith("SS") || _isPltSerial(s);
-  }
-
-  bool _isPhonefilmAlgo(String algo) {
-    return algo == "HANDSHAKE_NEW" || algo == "OLD_V1" || algo == "OLD_V3";
-  }
-
-  bool _shouldAutoTriggerDQ() {
-    if (_manualLockApplied) {
-      return _algorithms.isNotEmpty && _algorithms.first == "DQ";
+    String? preferredAlgorithm,
+    String handshakeMode = 'auto',
+    bool persistOnSuccess = true,
+    int maxRounds = 1,
+  })  : _handshakeMode = handshakeMode,
+        _persistOnSuccess = persistOnSuccess,
+        _maxRounds = maxRounds < 1 ? 1 : maxRounds {
+    final forced = normalizeAlgorithm(forcedAlgorithm);
+    if (forced != null) {
+      if (forced == algoSunshine) {
+        _algorithms = List<String>.from(sunshineAlgorithms);
+      } else {
+        _algorithms = [forced];
+      }
+      return;
     }
-    if (_awaitingPassU32) return false;
-    if (_algorithms.isNotEmpty && _algorithms[_currentAlgoIndex] == "PASS_U32") {
-      return false;
+
+    final preferred = normalizeAlgorithm(preferredAlgorithm);
+    if (preferred != null) {
+      if (preferred == algoSunshine) {
+        _algorithms = List<String>.from(sunshineAlgorithms);
+      } else {
+        _algorithms = List<String>.from(sunshineAlgorithms);
+        _algorithms.remove(preferred);
+        _algorithms.insert(0, preferred);
+      }
     }
-    return true;
+  }
+
+  static String? normalizeAlgorithm(String? raw) {
+    if (raw == null) return null;
+    final normalized = raw.trim().toUpperCase();
+    if (normalized.isEmpty) return null;
+
+    switch (normalized) {
+      case 'SUNSHINE':
+      case 'AUTO':
+      case 'AUTO_TRY':
+        return algoSunshine;
+      case 'ROCKSPACE':
+      case 'ROCKSPACE_STR':
+      case 'ROCKSPACE_SN':
+      case 'ROCKSPACE HANDSHAKE SEQUENCE':
+        return algoRockspace;
+      case 'HANDSHAKE_NEW':
+      case 'HANDSHAKENEW':
+      case 'STANDARD':
+      case 'GENERIC_NEW':
+      case 'DQ':
+      case 'DEVIA':
+      case 'SY':
+      case 'CUTTER':
+      case 'PASS_U32':
+      case 'PASSWORD2':
+      case 'PASS_WORD2':
+      case 'GETPASSWORD2':
+        return algoPassWord2;
+      case 'OLD_V1':
+      case 'GETOLDPASSWORD':
+      case 'OLDPASSWORD':
+      case 'PASS_WORD_OLD':
+        return algoOldPassWord;
+      case 'OLD_V3':
+      case 'PASSWORD':
+      case 'PASS_WORD':
+      case 'GETPASSWORD':
+        return algoPassWord;
+      default:
+        return null;
+    }
   }
 
   bool get isAuthenticated => _isAuthenticated;
 
   void startHandshake() {
-    print("🚀 Starting MachineHandshake Loop...");
-    _dataSubscription?.cancel();
-
-    _isAuthenticated = false;
-    _retryCount = 0;
-    _currentAlgoIndex = 0;
-    _messageBuffer = "";
-    _bd9Sent = false;
-    _bd10Sent = false;
-    _dqProtocolTriggered = false;
-    _awaitingPassU32 = false;
-    _passU32Seed = null;
-    _detectedSerial = null;
-    _stateHandshakeAttempted = false;
-    _usedStateHandshake = false;
-    _manualLockApplied = _algorithms.length == 1;
+    _resetState();
 
     _bluetooth.setSuppressAutoHandshake(true);
     _dataSubscription = _bluetooth.receivedDataStream.listen(_handleData);
 
-    onStatusUpdate("Initializing...");
+    onStatusUpdate('Initializing...');
 
-    // 1. PhoneFilm init sequence (motherboard + wake)
-    _bluetooth.write(";zxcvvbnmasdfghj;");
-    Future.delayed(
-      const Duration(milliseconds: 80),
-      () => _bluetooth.write(";zxcvvbnmasdfgh;"),
-    );
-    final mbRandom = List.generate(10, (_) => Random().nextInt(9) + 1).join();
-    Future.delayed(
-      const Duration(milliseconds: 140),
-      () => _bluetooth.write("BD:9,83,$mbRandom;"),
-    );
-
-    // 2. Initial commands to wake up the machine and get serial
-    _bluetooth.write(";RCBM;");
-    Future.delayed(
-      const Duration(milliseconds: 200),
-      () => _bluetooth.write(";;;RPID;"),
-    );
-    Future.delayed(
-      const Duration(milliseconds: 400),
-      () => _bluetooth.write(";RSVER;"),
-    );
-    Future.delayed(
-      const Duration(milliseconds: 600),
-      () => _bluetooth.write(";RHVER;"),
-    );
-    Future.delayed(
-      const Duration(milliseconds: 800),
-      () => _bluetooth.write(";RMODE;"),
-    );
-    Future.delayed(
-      const Duration(milliseconds: 1000),
-      () => _bluetooth.write(";RPGHEAD;"),
-    );
-    Future.delayed(
-      const Duration(milliseconds: 1200),
-      () => _bluetooth.write(";BD:20;"),
-    );
-
-    // 2. Targeted Jump (User request: Use what worked before)
-    _checkCacheAndJump();
-
-    // 3. Systematic trigger
-    Future.delayed(const Duration(milliseconds: 2000), () {
-      if (!_isAuthenticated && !_bd9Sent && !_bd10Sent && !_awaitingPassU32) {
-        _sendInitialChallenge();
-      }
+    // Keep the legacy wake-up sequence from the original Android app.
+    _safeWrite(';zxcvvbnmasdfghj;');
+    _schedule(const Duration(milliseconds: 60), () {
+      _safeWrite(';zxcvvbnmasdfgh;');
     });
+    final mbRandom = List.generate(10, (_) => Random().nextInt(9) + 1).join();
+    _schedule(
+      const Duration(milliseconds: 140),
+      () => _safeWrite('BD:9,83,$mbRandom;'),
+    );
+    _safeWrite(';RCBM;');
+    _schedule(const Duration(milliseconds: 220), () => _safeWrite(';;;RPID;'));
+    _schedule(const Duration(milliseconds: 320), () => _safeWrite(';RMODE;'));
+    _schedule(const Duration(milliseconds: 700), _requestChallenge);
   }
 
-  Future<void> _checkCacheAndJump() async {
-    String? serial = _bluetooth.serialNumber;
-    if (serial == null) return;
+  void _resetState() {
+    _cleanup();
+    _finished = false;
+    _isAuthenticated = false;
+    _currentAlgoIndex = 0;
+    _currentRound = 1;
+    _currentChallenge = null;
+    _awaitingAuthAck = false;
+    _messageBuffer = '';
+    _rockspaceState = _RockspaceState.idle;
+    _detectedPid = null;
+    _challengeRetryCount = 0;
+  }
 
-    String? cachedAlgo = await _bluetooth.getCachedHandshake(serial);
-    if (cachedAlgo != null) {
-      String? cachedMode = await _bluetooth.getCachedHandshakeMode(serial);
-      if (cachedMode == "manual") {
-        _lockToAlgorithm(cachedAlgo);
-        return;
-      }
-      int idx = _algorithms.indexWhere((a) => a == cachedAlgo);
-      if (idx != -1) {
-        print("🎯 Cache Hit! Jumping to algorithm: $cachedAlgo");
-        _currentAlgoIndex = idx;
-        // If it was DQ, we should also prepare for the special protocol
-        if (cachedAlgo == "DQ") {
-          _triggerDQProtocol();
+  void _requestChallenge() {
+    if (_finished || _isAuthenticated || !_bluetooth.isConnected) return;
+
+    _awaitingAuthAck = false;
+    _currentChallenge = null;
+    onStatusUpdate('Requesting challenge...');
+    _safeWrite('BD:10;');
+
+    _challengeTimer?.cancel();
+    _challengeTimer = Timer(const Duration(seconds: 3), () {
+      if (_finished || _isAuthenticated) return;
+      if (_currentChallenge == null) {
+        _challengeRetryCount++;
+        if (_challengeRetryCount <= _maxChallengeRetriesPerAlgorithm) {
+          _requestChallenge();
+        } else {
+          _challengeRetryCount = 0;
+          _tryNextAlgorithm();
         }
       }
-    }
-  }
-
-  void _lockToAlgorithm(String algo) {
-    if (_manualLockApplied) return;
-    _manualLockApplied = true;
-    _algorithms = [algo];
-    _currentAlgoIndex = 0;
-    _retryCount = 0;
-    _bd9Sent = false;
-    _bd10Sent = false;
-    _dqProtocolTriggered = false;
-    print("🔒 Manual handshake locked to: $algo");
-    if (algo == "DQ") {
-      _triggerDQProtocol();
-    }
-  }
-
-  void _sendBD9() {
-    if (_isAuthenticated || _bd10Sent) return;
-    _bd9Sent = true;
-    _watchdogTimer?.cancel();
-
-    // Watchdog: If no response in 5s, try next algorithm
-    _watchdogTimer = Timer(const Duration(seconds: 5), () {
-      print("⏰ Watchdog: No response to BD:9 after 5s.");
-      final algo = _algorithms[_currentAlgoIndex];
-      if (!_stateHandshakeAttempted && _isPhonefilmAlgo(algo)) {
-        _sendBD10Challenge();
-      } else {
-        print("⏰ Moving on...");
-        _tryNextAlgorithm();
-      }
     });
-
-    // 6 digits is more common and compatible with older/Sunshine machines
-    String random = List.generate(6, (_) => Random().nextInt(10)).join();
-    print("📤 Sending BD:9,$random; (Attempt ${_retryCount + 1})");
-    _bluetooth.write("BD:9,$random;");
-  }
-
-  void _sendBD10Challenge() {
-    if (_isAuthenticated) return;
-    _bd10Sent = true;
-    _stateHandshakeAttempted = true;
-    _usedStateHandshake = true;
-    onStatusUpdate("Testing STATE...");
-    _watchdogTimer?.cancel();
-
-    _watchdogTimer = Timer(const Duration(seconds: 5), () {
-      print("⏰ Watchdog: No response to BD:10 after 5s. Moving on...");
-      _tryNextAlgorithm();
-    });
-
-    print("📤 Sending BD:10; (STATE)");
-    _bluetooth.write("BD:10;");
-  }
-
-  void _sendPassU32() {
-    if (_isAuthenticated || _bd10Sent) return;
-    _awaitingPassU32 = true;
-    _bd9Sent = false;
-    onStatusUpdate("Testing PASS_U32...");
-    _watchdogTimer?.cancel();
-
-    _watchdogTimer = Timer(const Duration(seconds: 5), () {
-      print("⏰ Watchdog: No response to PASS_U32 after 5s. Moving on...");
-      _awaitingPassU32 = false;
-      _tryNextAlgorithm();
-    });
-
-    _passU32Seed = Random().nextInt(1000000000);
-    print("📤 Sending BD:9,8,$_passU32Seed; (PASS_U32)");
-    _bluetooth.write("BD:9,8,$_passU32Seed;");
-  }
-
-  void _sendInitialChallenge() {
-    final algo = _algorithms[_currentAlgoIndex];
-    if (algo == "PASS_U32") {
-      _sendPassU32();
-      return;
-    }
-    if (_isPltSerial(_detectedSerial) && _shouldAutoTriggerDQ()) {
-      _triggerDQProtocol();
-      return;
-    }
-    if (_stateHandshakeAttempted && _isPhonefilmAlgo(algo)) {
-      _sendBD10Challenge();
-    } else {
-      _sendBD9();
-    }
-  }
-
-  void _triggerDQProtocol() {
-    if (_isAuthenticated || _dqProtocolTriggered) return;
-    print("🤖 DQ Machine Detected! Triggering Special Protocol...");
-    _dqProtocolTriggered = true;
-
-    // Jump to DQ algorithm in the loop for immediate results
-    int dqIdx = _algorithms.indexOf("DQ");
-    if (dqIdx != -1) {
-      _currentAlgoIndex = dqIdx;
-    }
-
-    _bd10Sent = true;
-    _bd9Sent = false; // Reset BD9 flag as we are switching paths
-    _watchdogTimer?.cancel();
-
-    // Watchdog: If no response in 5s, try next algorithm
-    _watchdogTimer = Timer(const Duration(seconds: 5), () {
-      print("⏰ Watchdog: No response to DQ Protocol after 5s. Moving on...");
-      _tryNextAlgorithm();
-    });
-
-    // Step 1: App Sends Version Checks & BD:10
-    _bluetooth.write(";RSVER;");
-    Future.delayed(
-      const Duration(milliseconds: 100),
-      () => _bluetooth.write(";RHVER;"),
-    );
-    Future.delayed(
-      const Duration(milliseconds: 200),
-      () => _bluetooth.write(";BD:10;"),
-    );
-    Future.delayed(
-      const Duration(milliseconds: 300),
-      () => _bluetooth.write(";RCBM;"),
-    );
-  }
-
-  void _finishHandshake(bool success) {
-    print("🏁 Handshake finishing. Success: $success");
-    _bluetooth.setSuppressAutoHandshake(false);
-    onHandshakeComplete(success);
-  }
-
-  void dispose() {
-    _watchdogTimer?.cancel();
-    _bluetooth.setSuppressAutoHandshake(false);
-    _dataSubscription?.cancel();
   }
 
   void _handleData(String data) {
-    print("📥 RX: $data");
+    if (_finished) return;
+
     _messageBuffer += data;
+    while (_messageBuffer.contains(';')) {
+      final end = _messageBuffer.indexOf(';');
+      var message = _messageBuffer.substring(0, end + 1);
+      _messageBuffer = _messageBuffer.substring(end + 1);
 
-    while (_messageBuffer.contains(";")) {
-      int endIndex = _messageBuffer.indexOf(";");
-      String msg = _messageBuffer.substring(0, endIndex + 1);
-      _messageBuffer = _messageBuffer.substring(endIndex + 1);
+      message = message.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), '').trim();
+      if (message.isEmpty) continue;
 
-      msg = msg.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), '').trim();
-      if (msg.isEmpty) continue;
-
-      _processMessage(msg);
+      _processMessage(message);
     }
   }
 
   void _processMessage(String message) {
-    print("⚙️ Processing: $message");
-
-    // 1. Serial Detection (Improved Priority Logic)
-    if (message.contains("CBM=") ||
-        message.contains("PID=") ||
-        message.contains("RPID=")) {
-      String rawSerial = message.split("=")[1].split(";")[0].trim();
-      if (rawSerial.isNotEmpty) {
-        bool newIsPriority = _isPrioritySerial(rawSerial);
-        bool oldIsPriority = _isPrioritySerial(_detectedSerial);
-
-        // Decision logic to update serial:
-        // - Always update if we have nothing.
-        // - Update if the new one is priority (SS/DQ) and the old one is not.
-        // - Update if it's a CBM= command (explicit machine serial) and we don't already have a priority serial from somewhere else.
-        bool shouldUpdate = false;
-        if (_detectedSerial == null) {
-          shouldUpdate = true;
-        } else if (newIsPriority && !oldIsPriority) {
-          shouldUpdate = true;
-        } else if (message.contains("CBM=") &&
-            (!oldIsPriority || newIsPriority)) {
-          // If it's CBM, we prefer it unless we already have a priority one and this CBM is not priority
-          shouldUpdate = true;
-        }
-
-        if (shouldUpdate) {
-          _detectedSerial = rawSerial;
-          _bluetooth.setSerialNumber(rawSerial);
-          print(
-            "📋 Detected Serial: $rawSerial${message.contains("CBM=") ? " (via CBM)" : ""}",
-          );
-
-          if (!_manualLockApplied) {
-            _applyManualPreferenceIfAny(rawSerial);
-          }
-
-          // Fast-track DQ/DX/LH if identified
-          if (_isPltSerial(rawSerial) && _shouldAutoTriggerDQ()) {
-            if (!_bd10Sent && !_isAuthenticated) {
-              _triggerDQProtocol();
-            }
-          }
-        }
-      }
-    } else if ((message.startsWith("SS") ||
-            message.startsWith("DQ") ||
-            message.startsWith("DX") ||
-            message.startsWith("LH")) &&
-        !message.contains("=")) {
-      String rawSerial = message.replaceAll(";", "").trim();
-      if (rawSerial.isNotEmpty) {
-        bool oldIsPriority = _isPrioritySerial(_detectedSerial);
-
-        // Bare SS/DQ is always considered priority
-        if (_detectedSerial == null || !oldIsPriority) {
-          _detectedSerial = rawSerial;
-          _bluetooth.setSerialNumber(rawSerial);
-          print("📋 Detected Bare Serial: $rawSerial");
-
-          if (!_manualLockApplied) {
-            _applyManualPreferenceIfAny(rawSerial);
-          }
-
-          if (_isPltSerial(rawSerial) && _shouldAutoTriggerDQ()) {
-            if (!_bd10Sent && !_isAuthenticated) {
-              _triggerDQProtocol();
-            }
-          }
-        }
-      }
+    final pid =
+        _extractKeyValue(message, 'PID=') ?? _extractKeyValue(message, 'RPID=');
+    if (pid != null && pid.isNotEmpty) {
+      _detectedPid = pid;
     }
 
-    // 1.5 PASS_U32 verification (Upprinting)
-    if (_awaitingPassU32 && _passU32Seed != null) {
-      final actual = _extractPassU32Value(message);
-      if (actual != null) {
-        final expected = EncryptionUtil.getPassU32Expected(_passU32Seed!);
-        if (actual == expected) {
-          _watchdogTimer?.cancel();
-          _awaitingPassU32 = false;
-          _isAuthenticated = true;
-          String winAlgo = _algorithms[_currentAlgoIndex];
-          print("✅ PASS_U32 SUCCESS! Algorithm: $winAlgo");
-          onStatusUpdate("✅ Connected!");
-          _bluetooth.cacheSuccessfulHandshake(
-            winAlgo,
-            true,
-            mode: _manualLockApplied ? "manual" : (_usedStateHandshake ? "phonefilm" : _handshakeMode),
-          );
-          // Optional follow-up used by Upprinting to fetch URL/COMPNO
-          _bluetooth.write("BD:9;");
-          _finishHandshake(true);
-          return;
-        } else {
-          print("❌ PASS_U32 failed. expected=$expected actual=$actual");
-          _awaitingPassU32 = false;
-          _tryNextAlgorithm();
-          return;
-        }
-      }
+    if (message.contains('RCMD=12,0')) {
+      _markSuccess();
+      return;
     }
 
-    // 2. Protocol Responses
-    if (message.contains("RCMD=9")) {
-      onStatusUpdate("Verifying...");
-      _bluetooth.write("BD:10;");
-    } else if (message.contains("RCMD=11,")) {
-      _watchdogTimer?.cancel();
-      _handleChallenge(message);
-    } else if (message.contains("RCMD=12,0")) {
-      _watchdogTimer?.cancel();
-      _isAuthenticated = true;
-      String winAlgo = _algorithms[_currentAlgoIndex];
-      print(
-        "✅ SUCCESS! Algorithm: $winAlgo for Serial: ${_detectedSerial ?? 'Unknown'}",
-      );
-      onStatusUpdate("✅ Connected!");
-      _bluetooth.cacheSuccessfulHandshake(
-        winAlgo,
-        true,
-        mode: _manualLockApplied ? "manual" : (_usedStateHandshake ? "phonefilm" : _handshakeMode),
-      );
-      _finishHandshake(true);
-    } else if (message.contains("RCMD=12,1")) {
-      if (!_isAuthenticated) {
-        print("❌ Auth Failed for ${_algorithms[_currentAlgoIndex]}");
-        _tryNextAlgorithm();
+    if (message.contains('RCMD=12,1')) {
+      _tryNextAlgorithm();
+      return;
+    }
+
+    if (_handleRockspaceMessage(message)) {
+      return;
+    }
+
+    if (!_awaitingAuthAck &&
+        (message.contains('RCMD=11,') ||
+            message.startsWith('11,') ||
+            message.contains(',11,'))) {
+      final parsed = _extractChallenge(message);
+      if (parsed != null) {
+        _currentChallenge = parsed;
+        _challengeRetryCount = 0;
+        _challengeTimer?.cancel();
+        _sendCurrentAlgorithm();
       }
-    } else if (message.startsWith("11,") || message.contains(",11,")) {
-      // Sometimes the machine sends a challenge without RCMD= prefix after certain sequences
-      _handleChallenge(message);
     }
   }
 
-  void _handleChallenge(String response) {
-    int challenge = _extractChallenge(response);
-    String currentAlgo = _algorithms[_currentAlgoIndex];
+  void _sendCurrentAlgorithm() {
+    if (_finished || _isAuthenticated) return;
 
-    print("🧪 Testing Algorithm: $currentAlgo (Retry $_retryCount)");
-    onStatusUpdate("Testing $currentAlgo...");
-
-    int password;
-    switch (currentAlgo) {
-      case "DQ":
-        password = EncryptionUtil.getDQHandshake(challenge);
-        break;
-      case "HANDSHAKE_NEW":
-        password = EncryptionUtil.getHandshakeNew(challenge);
-        break;
-      case "STANDARD":
-        // In some contexts STANDARD uses HandshakeNew, in others something else.
-        // Let's keep it as is or try to differentiate.
-        password = EncryptionUtil.getHandshakeNew(challenge);
-        break;
-      case "OLD_V1":
-        password = EncryptionUtil.getHandshakeOldV1(challenge);
-        break;
-      case "OLD_V3":
-        password = EncryptionUtil.getHandshakeOldV3(challenge);
-        break;
-      case "GENERIC_NEW":
-        password = EncryptionUtil.getSunshinePassword(challenge, "");
-        break;
-      default:
-        password = EncryptionUtil.getSunshinePassword(challenge, currentAlgo);
+    if (_currentAlgoIndex >= _algorithms.length) {
+      _advanceRoundOrFinish();
+      return;
     }
 
-    print("📤 Sending BD:12,$password;");
-    _bluetooth.write("BD:12,$password;");
+    final algo = _algorithms[_currentAlgoIndex];
+    if (algo == algoRockspace) {
+      _startRockspaceHandshake();
+      return;
+    }
+
+    if (_currentChallenge == null) return;
+
+    final challenge = _currentChallenge!;
+    final password = _calculatePassword(algo, challenge);
+
+    onStatusUpdate('Testing $algo...');
+    _safeWrite('BD:12,$password;');
+
+    _awaitingAuthAck = true;
+    _ackTimer?.cancel();
+    _ackTimer = Timer(const Duration(seconds: 2), () {
+      if (_finished || _isAuthenticated) return;
+      if (_awaitingAuthAck) {
+        _tryNextAlgorithm();
+      }
+    });
+  }
+
+  int _calculatePassword(String algorithm, int challenge) {
+    switch (algorithm) {
+      case algoPassWord2:
+        return EncryptionUtil.getHandshakeNew(challenge);
+      case algoOldPassWord:
+        return EncryptionUtil.getHandshakeOldV1(challenge);
+      case algoPassWord:
+        return EncryptionUtil.getHandshakeOldV3(challenge);
+      default:
+        return EncryptionUtil.getHandshakeNew(challenge);
+    }
+  }
+
+  void _markSuccess() {
+    if (_finished || _isAuthenticated) return;
+
+    _isAuthenticated = true;
+    _awaitingAuthAck = false;
+    _ackTimer?.cancel();
+
+    final winAlgo = _algorithms[_currentAlgoIndex];
+    onStatusUpdate('✅ Connected!');
+    _bluetooth.cacheSuccessfulHandshake(
+      winAlgo,
+      true,
+      mode: _handshakeMode,
+      persist: _persistOnSuccess,
+    );
+
+    _finish(true);
   }
 
   void _tryNextAlgorithm() {
+    if (_finished || _isAuthenticated) return;
+
+    _awaitingAuthAck = false;
+    _ackTimer?.cancel();
+    _rockspaceState = _RockspaceState.idle;
+    _challengeRetryCount = 0;
     _currentAlgoIndex++;
-    _retryCount++;
-    _awaitingPassU32 = false;
-    _passU32Seed = null;
-    _stateHandshakeAttempted = false;
-    _usedStateHandshake = false;
 
     if (_currentAlgoIndex < _algorithms.length) {
-      _bd9Sent = false;
-      _bd10Sent = false;
-      Future.delayed(const Duration(milliseconds: 500), () {
-        if (_bluetooth.isConnected) {
-          _sendInitialChallenge();
-        }
-      });
-    } else {
-      print("🚫 All algorithms exhausted.");
-      onStatusUpdate("❌ Failed");
-      _finishHandshake(false);
+      if (_algorithms[_currentAlgoIndex] == algoRockspace ||
+          _currentChallenge != null) {
+        _sendCurrentAlgorithm();
+      } else {
+        _requestChallenge();
+      }
+      return;
     }
+
+    _advanceRoundOrFinish();
   }
 
-  int? _extractPassU32Value(String message) {
+  void _advanceRoundOrFinish() {
+    if (_currentRound < _maxRounds) {
+      _currentRound++;
+      _currentAlgoIndex = 0;
+      _awaitingAuthAck = false;
+      _rockspaceState = _RockspaceState.idle;
+      _requestChallenge();
+      return;
+    }
+    _finish(false);
+  }
+
+  void _startRockspaceHandshake() {
+    if (_finished || _isAuthenticated) return;
+
+    _currentChallenge = null;
+    _awaitingAuthAck = false;
+    _rockspaceState = _RockspaceState.waitingSerial;
+
+    onStatusUpdate('Testing Rockspace Machine Handshake...');
+    _safeWrite('STR=10,0;');
+
+    _challengeTimer?.cancel();
+    _challengeTimer = Timer(const Duration(seconds: 3), () {
+      if (_finished || _isAuthenticated) return;
+      if (_rockspaceState == _RockspaceState.waitingSerial) {
+        final knownSerial = _extractCandidateSerial(_bluetooth.serialNumber);
+        if (knownSerial != null && knownSerial.isNotEmpty) {
+          onStatusUpdate('Rockspace using known serial...');
+          _sendRockspaceAuth(knownSerial);
+          return;
+        }
+        _tryNextAlgorithm();
+      }
+    });
+  }
+
+  bool _handleRockspaceMessage(String message) {
+    if (_currentAlgoIndex >= _algorithms.length) return false;
+    if (_algorithms[_currentAlgoIndex] != algoRockspace) return false;
+    final upper = message.toUpperCase();
+
+    if (_rockspaceState == _RockspaceState.waitingSerial) {
+      final serial = _extractRockspaceSerial(message);
+      if (serial == null || serial.isEmpty) return false;
+
+      _sendRockspaceAuth(serial);
+      return true;
+    }
+
+    if (_rockspaceState == _RockspaceState.waitingAck) {
+      if (upper.contains('RSTR=10,0') ||
+          upper.contains('STR=10,0') ||
+          upper.contains('RSTR=10,OK') ||
+          upper.contains('STR=10,OK') ||
+          upper.contains('STR=10,SUCCESS')) {
+        _markSuccess();
+        return true;
+      }
+      if (upper.contains('RSTR=10,1') ||
+          upper.contains('STR=10,1') ||
+          upper.contains('RSTR=10,FAIL') ||
+          upper.contains('STR=10,FAIL') ||
+          upper.contains('RSTR=10,ERROR') ||
+          upper.contains('STR=10,ERROR')) {
+        _tryNextAlgorithm();
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  void _sendRockspaceAuth(String serialRaw) {
+    final serial = _extractCandidateSerial(serialRaw);
+    if (serial == null || serial.isEmpty) {
+      _tryNextAlgorithm();
+      return;
+    }
+
+    _challengeTimer?.cancel();
+    _bluetooth.setSerialNumber(serial);
+    final pid = _resolveRockspacePid();
+    final password = EncryptionUtil.getRockspaceSnHandshake(
+      pid: pid,
+      sn: serial,
+    );
+
+    onStatusUpdate('Rockspace auth...');
+    _safeWrite('STR=10,$serial#$password;');
+    _rockspaceState = _RockspaceState.waitingAck;
+    _awaitingAuthAck = true;
+
+    _ackTimer?.cancel();
+    _ackTimer = Timer(const Duration(seconds: 4), () {
+      if (_finished || _isAuthenticated) return;
+      if (_rockspaceState == _RockspaceState.waitingAck) {
+        _tryNextAlgorithm();
+      }
+    });
+  }
+
+  String? _extractCandidateSerial(String? raw) {
+    final value = (raw ?? '').trim();
+    if (value.isEmpty) return null;
+
+    var text = value;
+    final markers = ['CBM=', 'SN=', 'SERIAL=', 'STR=10,', 'RSTR=10,'];
+    for (final marker in markers) {
+      final idx = text.toUpperCase().lastIndexOf(marker);
+      if (idx != -1) {
+        text = text.substring(idx + marker.length);
+      }
+    }
+
+    text = text.replaceAll(';', ' ');
+    if (text.contains('#')) {
+      text = text.split('#').first;
+    }
+
+    final tokens = RegExp(r'[A-Za-z0-9_\-]{4,}')
+        .allMatches(text)
+        .map((m) => m.group(0) ?? '')
+        .where((s) => s.isNotEmpty)
+        .toList();
+
+    if (tokens.isEmpty) return null;
+
+    tokens.sort((a, b) => b.length.compareTo(a.length));
+    final best = tokens.first;
+    final upper = best.toUpperCase();
+    if (upper == 'OK' ||
+        upper == 'SUCCESS' ||
+        upper == 'FAIL' ||
+        upper == 'ERROR' ||
+        upper == 'CBM' ||
+        upper == 'STR' ||
+        upper == 'RSTR') {
+      return null;
+    }
+    return best;
+  }
+
+  String _resolveRockspacePid() {
+    final pid = (_detectedPid ?? '').trim();
+    if (pid.isEmpty) return defaultRockspacePid;
+    return pid;
+  }
+
+  String? _extractRockspaceSerial(String message) {
+    final trimmed = message.trim();
+    String payload;
+    if (trimmed.startsWith('STR=10,')) {
+      payload = trimmed.substring(7);
+    } else if (trimmed.startsWith('RSTR=10,')) {
+      payload = trimmed.substring(8);
+    } else {
+      return null;
+    }
+
+    if (payload.contains('#')) return null;
+    final serial = _extractCandidateSerial(payload);
+    if (serial == null || serial.isEmpty) return null;
+
+    final upper = serial.toUpperCase();
+    if (upper == '0' ||
+        upper == '1' ||
+        upper == 'OK' ||
+        upper == 'SUCCESS' ||
+        upper == 'FAIL' ||
+        upper == 'ERROR') {
+      return null;
+    }
+    return serial;
+  }
+
+  String? _extractKeyValue(String message, String key) {
     try {
-      var msg = message.replaceAll(";", "").trim();
-      if (!msg.contains("=")) return null;
-      final parts = msg.split("=");
-      if (parts.length < 2) return null;
-      final rhs = parts.sublist(1).join("=").trim();
-      final items = rhs.split(",");
-      if (items.length < 3) return null;
-      final value = items[2].trim();
-      return int.tryParse(value);
+      final idx = message.indexOf(key);
+      if (idx == -1) return null;
+      final start = idx + key.length;
+      final end = message.indexOf(';', start);
+      final value =
+          (end == -1 ? message.substring(start) : message.substring(start, end))
+              .trim();
+      return value.isEmpty ? null : value;
     } catch (_) {
       return null;
     }
   }
 
-  Future<void> _applyManualPreferenceIfAny(String serial) async {
+  int? _extractChallenge(String message) {
     try {
-      final mode = await _bluetooth.getCachedHandshakeMode(serial);
-      if (mode == "manual") {
-        final algo = await _bluetooth.getCachedHandshake(serial);
-        if (algo != null && algo.isNotEmpty) {
-          _lockToAlgorithm(algo);
-        }
+      if (message.contains('RCMD=11,')) {
+        final start = message.indexOf('RCMD=11,') + 8;
+        var end = message.indexOf(';', start);
+        if (end == -1) end = message.length;
+        return int.tryParse(message.substring(start, end).trim());
       }
-    } catch (e) {
-      print("Error applying manual handshake preference: $e");
-    }
+
+      if (message.startsWith('11,')) {
+        final parts = message.replaceAll(';', '').split(',');
+        if (parts.length >= 2) return int.tryParse(parts[1].trim());
+      }
+
+      final idx = message.indexOf(',11,');
+      if (idx != -1) {
+        final tail = message.substring(idx + 4).replaceAll(';', '');
+        final parts = tail.split(',');
+        if (parts.isNotEmpty) return int.tryParse(parts.first.trim());
+      }
+    } catch (_) {}
+
+    return null;
   }
 
-  int _extractChallenge(String msg) {
-    try {
-      int start = msg.indexOf("RCMD=11,") + 8;
-      int end = msg.indexOf(";", start);
-      return int.parse(msg.substring(start, end).trim());
-    } catch (e) {
-      return 0;
+  void _schedule(Duration delay, void Function() action) {
+    final timer = Timer(delay, () {
+      if (_finished || !_bluetooth.isConnected) return;
+      action();
+    });
+    _scheduledTimers.add(timer);
+  }
+
+  void _safeWrite(String command) {
+    _bluetooth.write(command).catchError((_) {});
+  }
+
+  void _finish(bool success) {
+    if (_finished) return;
+    _finished = true;
+    _cleanup();
+    _bluetooth.setSuppressAutoHandshake(false);
+    onHandshakeComplete(success);
+  }
+
+  void _cleanup() {
+    _challengeTimer?.cancel();
+    _challengeTimer = null;
+
+    _ackTimer?.cancel();
+    _ackTimer = null;
+    _rockspaceState = _RockspaceState.idle;
+
+    for (final timer in _scheduledTimers) {
+      timer.cancel();
     }
+    _scheduledTimers.clear();
+
+    _dataSubscription?.cancel();
+    _dataSubscription = null;
+  }
+
+  void dispose() {
+    _cleanup();
+    _bluetooth.setSuppressAutoHandshake(false);
   }
 }
+
+enum _RockspaceState { idle, waitingSerial, waitingAck }

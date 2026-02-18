@@ -26,6 +26,8 @@ class _ProductListScreenState extends State<ProductListScreen> {
   final TextEditingController _searchController = TextEditingController();
   Timer? _debounce;
 
+  String _safeUrl(String url) => ApiService().normalizeUrl(url);
+
   @override
   void initState() {
     super.initState();
@@ -170,22 +172,24 @@ class _ProductListScreenState extends State<ProductListScreen> {
                             ),
                             padding: const EdgeInsets.all(4),
                             child: Image.network(
-                              product.image.isNotEmpty
-                                  ? product.image
-                                  : widget.category.imageUrl,
+                              _safeUrl(
+                                product.image.isNotEmpty
+                                    ? product.image
+                                    : widget.category.imageUrl,
+                              ),
                               fit: BoxFit.contain,
                               errorBuilder: (context, error, stackTrace) {
                                 if (product.image.isNotEmpty &&
                                     widget.category.imageUrl.isNotEmpty) {
                                   return Image.network(
-                                    widget.category.imageUrl,
+                                    _safeUrl(widget.category.imageUrl),
                                     fit: BoxFit.contain,
                                     errorBuilder:
                                         (context, error, stackTrace) =>
                                             const Icon(
-                                              Icons.image,
-                                              color: Colors.grey,
-                                            ),
+                                      Icons.image,
+                                      color: Colors.grey,
+                                    ),
                                   );
                                 }
                                 return const Icon(

@@ -1,4 +1,6 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'ui/screens/login_screen.dart';
 import 'ui/screens/splash_screen.dart';
@@ -10,8 +12,41 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:flutter_localizations/flutter_localizations.dart';
 
+class AppHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    final client = super.createHttpClient(context);
+    const allowBadCerts =
+        bool.fromEnvironment('ALLOW_BAD_CERTS', defaultValue: true);
+    if (allowBadCerts) {
+      client.badCertificateCallback =
+          (X509Certificate cert, String host, int port) => true;
+    }
+    return client;
+  }
+}
+
+Future<void> _applyInitialOrientation() async {
+  final prefs = await SharedPreferences.getInstance();
+  final forceLandscape = prefs.getBool('force_landscape') ?? false;
+  if (forceLandscape) {
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+  } else {
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  HttpOverrides.global = AppHttpOverrides();
+  await _applyInitialOrientation();
   await ApiService.initialize();
   runApp(
     ChangeNotifierProvider(

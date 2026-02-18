@@ -27,6 +27,8 @@ class _CartScreenState extends State<CartScreen> {
   String _searchQuery = "";
   Timer? _debounce;
 
+  String _safeUrl(String url) => ApiService().normalizeUrl(url);
+
   @override
   void initState() {
     super.initState();
@@ -409,9 +411,8 @@ class _CartScreenState extends State<CartScreen> {
                   final qty = _quantities[good.id] ?? 0;
                   if (qty <= 0) return const SizedBox.shrink();
 
-                  final displayName = good.nameAr.isNotEmpty
-                      ? good.nameAr
-                      : good.nameEn;
+                  final displayName =
+                      good.nameAr.isNotEmpty ? good.nameAr : good.nameEn;
                   final displayPrice = good.priceAfterDiscount ?? good.price;
 
                   return Container(
@@ -430,7 +431,7 @@ class _CartScreenState extends State<CartScreen> {
                           borderRadius: BorderRadius.circular(8),
                           child: good.image.isNotEmpty
                               ? Image.network(
-                                  good.image,
+                                  _safeUrl(good.image),
                                   width: 40,
                                   height: 40,
                                   fit: BoxFit.cover,
@@ -580,9 +581,8 @@ class _CartScreenState extends State<CartScreen> {
                   itemBuilder: (context, index) {
                     final good = _goods[index];
                     final int qty = _quantities[good.id] ?? 0;
-                    final displayName = good.nameAr.isNotEmpty
-                        ? good.nameAr
-                        : good.nameEn;
+                    final displayName =
+                        good.nameAr.isNotEmpty ? good.nameAr : good.nameEn;
                     final displayPrice = good.priceAfterDiscount ?? good.price;
 
                     return InkWell(
@@ -611,22 +611,22 @@ class _CartScreenState extends State<CartScreen> {
                               borderRadius: BorderRadius.circular(8),
                               child: good.image.isNotEmpty
                                   ? Image.network(
-                                      good.image,
+                                      _safeUrl(good.image),
                                       width: 60,
                                       height: 60,
                                       fit: BoxFit.cover,
                                       errorBuilder:
                                           (context, error, stackTrace) {
-                                            return Container(
-                                              width: 60,
-                                              height: 60,
-                                              color: const Color(0xFF2A2A2A),
-                                              child: const Icon(
-                                                Icons.image_not_supported,
-                                                color: Colors.grey,
-                                              ),
-                                            );
-                                          },
+                                        return Container(
+                                          width: 60,
+                                          height: 60,
+                                          color: const Color(0xFF2A2A2A),
+                                          child: const Icon(
+                                            Icons.image_not_supported,
+                                            color: Colors.grey,
+                                          ),
+                                        );
+                                      },
                                     )
                                   : Container(
                                       width: 60,

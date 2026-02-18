@@ -12,9 +12,11 @@ import android.os.Build
 import android.net.NetworkCapabilities
 import android.net.ConnectivityManager
 import android.net.wifi.WifiManager
+import android.net.Uri
 import android.content.IntentFilter
 import android.content.Context
 import android.content.BroadcastReceiver
+import androidx.core.content.FileProvider
 import com.caverock.androidsvg.SVG
 import com.example.flutter_project.serial.SerialPortManager
 import io.flutter.embedding.android.FlutterActivity
@@ -22,6 +24,8 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
     private val channelName = "svg_renderer"
@@ -29,6 +33,7 @@ class MainActivity : FlutterActivity() {
     private val serialEventChannel = "serial_port/events"
     private val settingsChannel = "app_settings"
     private val serialManager = SerialPortManager()
+    private val serialExecutor = Executors.newSingleThreadExecutor()
     private var wifiReturnReceiver: BroadcastReceiver? = null
     private var wifiReturnTimeout: Runnable? = null
     private var wifiReturnPoller: Runnable? = null
@@ -112,6 +117,53 @@ class MainActivity : FlutterActivity() {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
         startActivity(launch)
+    }
+
+    private fun canInstallPackagesNow(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            packageManager.canRequestPackageInstalls()
+        } else {
+            true
+        }
+    }
+
+    private fun openUnknownSourcesSettingsInternal(): Boolean {
+        return try {
+            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:$packageName")
+                )
+            } else {
+                Intent(Settings.ACTION_SECURITY_SETTINGS)
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun installApkInternal(path: String): Boolean {
+        val apkFile = File(path)
+        if (!apkFile.exists()) {
+            throw IllegalArgumentException("APK not found: $path")
+        }
+
+        val apkUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            FileProvider.getUriForFile(this, "$packageName.fileprovider", apkFile)
+        } else {
+            Uri.fromFile(apkFile)
+        }
+
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(apkUri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(intent)
+        return true
     }
 
     private fun setupWifiAutoReturn(timeoutSeconds: Int) {
@@ -233,24 +285,34 @@ class MainActivity : FlutterActivity() {
                     "open" -> {
                         val path = call.argument<String>("path")
                         val baud = call.argument<Int>("baud") ?: 115200
-                        try {
-                            val ok = serialManager.open(path, baud)
-                            result.success(ok)
-                        } catch (e: Exception) {
-                            result.error("open_failed", e.message, null)
+                        serialExecutor.execute {
+                            try {
+                                val ok = serialManager.open(path, baud)
+                                runOnUiThread { result.success(ok) }
+                            } catch (e: Exception) {
+                                runOnUiThread {
+                                    result.error("open_failed", e.message, null)
+                                }
+                            }
                         }
                     }
                     "close" -> {
-                        serialManager.close()
-                        result.success(true)
+                        serialExecutor.execute {
+                            serialManager.close()
+                            runOnUiThread { result.success(true) }
+                        }
                     }
                     "write" -> {
                         val data = call.argument<String>("data") ?: ""
-                        try {
-                            serialManager.write(data.toByteArray(Charsets.ISO_8859_1))
-                            result.success(true)
-                        } catch (e: Exception) {
-                            result.error("write_failed", e.message, null)
+                        serialExecutor.execute {
+                            try {
+                                serialManager.write(data.toByteArray(Charsets.ISO_8859_1))
+                                runOnUiThread { result.success(true) }
+                            } catch (e: Exception) {
+                                runOnUiThread {
+                                    result.error("write_failed", e.message, null)
+                                }
+                            }
                         }
                     }
                     "writeBytes" -> {
@@ -258,15 +320,23 @@ class MainActivity : FlutterActivity() {
                         if (bytes == null) {
                             result.error("write_failed", "bytes is null", null)
                         } else {
-                            try {
-                                serialManager.write(bytes)
-                                result.success(true)
-                            } catch (e: Exception) {
-                                result.error("write_failed", e.message, null)
+                            serialExecutor.execute {
+                                try {
+                                    serialManager.write(bytes)
+                                    runOnUiThread { result.success(true) }
+                                } catch (e: Exception) {
+                                    runOnUiThread {
+                                        result.error("write_failed", e.message, null)
+                                    }
+                                }
                             }
                         }
                     }
-                    "isOpen" -> result.success(serialManager.isOpen())
+                    "isOpen" -> {
+                        serialExecutor.execute {
+                            runOnUiThread { result.success(serialManager.isOpen()) }
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -291,6 +361,24 @@ class MainActivity : FlutterActivity() {
                             result.error("wifi_settings_failed", e.message, null)
                         }
                     }
+                    "canInstallPackages" -> {
+                        result.success(canInstallPackagesNow())
+                    }
+                    "openInstallUnknownSourcesSettings" -> {
+                        result.success(openUnknownSourcesSettingsInternal())
+                    }
+                    "installApk" -> {
+                        val pathArg = call.argument<String>("path")
+                        if (pathArg.isNullOrBlank()) {
+                            result.error("install_apk_failed", "path is empty", null)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            result.success(installApkInternal(pathArg))
+                        } catch (e: Exception) {
+                            result.error("install_apk_failed", e.message, null)
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -300,6 +388,7 @@ class MainActivity : FlutterActivity() {
 
     override fun onDestroy() {
         cleanupWifiAutoReturn()
+        serialExecutor.shutdownNow()
         serialManager.close()
         super.onDestroy()
     }

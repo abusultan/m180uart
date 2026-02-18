@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'dart:async';
-import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter_svg/flutter_svg.dart' as svg;
 import 'package:flutter/material.dart';
@@ -643,7 +642,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     final sizeText = _previewData == null
         ? null
         : "W:${(_previewData!.maxX - _previewData!.minX).abs().round()} "
-              "L:${(_previewData!.maxY - _previewData!.minY).abs().round()} mm";
+            "L:${(_previewData!.maxY - _previewData!.minY).abs().round()} mm";
 
     return Scaffold(
       appBar: AppBar(
@@ -770,8 +769,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                       SizedBox(
                         height: 56,
                         child: ElevatedButton(
-                          onPressed:
-                              _isCutting ||
+                          onPressed: _isCutting ||
                                   _isDownloading ||
                                   (!hasBalance && isConnected)
                               ? null
@@ -792,8 +790,8 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                             backgroundColor: !hasBalance && isConnected
                                 ? Colors.red.shade900
                                 : (isConnected
-                                      ? const Color(0xFF00FF88)
-                                      : const Color(0xFF444444)),
+                                    ? const Color(0xFF00FF88)
+                                    : const Color(0xFF444444)),
                             foregroundColor: isConnected && hasBalance
                                 ? Colors.black
                                 : Colors.white,
@@ -811,14 +809,14 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                                           'not_enough_pieces',
                                         )
                                       : (isConnected
-                                            ? AppStrings.of(
-                                                context,
-                                                'send_to_cutter',
-                                              )
-                                            : AppStrings.of(
-                                                context,
-                                                'connect_to_cutter',
-                                              )),
+                                          ? AppStrings.of(
+                                              context,
+                                              'send_to_cutter',
+                                            )
+                                          : AppStrings.of(
+                                              context,
+                                              'connect_to_cutter',
+                                            )),
                                   style: const TextStyle(
                                     fontSize: 18,
                                     fontWeight: FontWeight.bold,
@@ -854,14 +852,24 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   }
 
   Future<bool> _performHandshakeSync() async {
-    if (_usesPltFormat()) {
-      return await _bluetooth.performPrintHandshakeDQ();
+    final cutter = _bluetooth;
+    final serial = (cutter.serialNumber ?? '').trim();
+
+    String? preferred = MachineHandshake.normalizeAlgorithm(
+      cutter.successfulHandshakeType,
+    );
+    if ((preferred == null || preferred.isEmpty) && serial.isNotEmpty) {
+      preferred = MachineHandshake.normalizeAlgorithm(
+        await cutter.getCachedHandshake(serial),
+      );
     }
 
     final completer = Completer<bool>();
-
     final handshake = MachineHandshake(
-      _bluetooth,
+      cutter,
+      preferredAlgorithm: preferred,
+      handshakeMode: 'sync',
+      persistOnSuccess: true,
       onStatusUpdate: (status) {
         if (mounted) setState(() => _status = status);
       },
@@ -872,19 +880,16 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
 
     handshake.startHandshake();
 
-    // Safety timeout of 15 seconds (should be fast if cached)
-    return await completer.future
-        .timeout(
-          const Duration(seconds: 15),
-          onTimeout: () {
-            handshake.dispose();
-            return false;
-          },
-        )
-        .then((val) {
-          handshake.dispose();
-          return val;
-        });
+    try {
+      final timeoutSeconds =
+          preferred == MachineHandshake.algoRockspace ? 25 : 20;
+      return await completer.future.timeout(
+        Duration(seconds: timeoutSeconds),
+        onTimeout: () => false,
+      );
+    } finally {
+      handshake.dispose();
+    }
   }
 }
 

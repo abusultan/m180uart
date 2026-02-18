@@ -108,10 +108,24 @@ class ProfileScreen extends StatelessWidget {
   }
 
   Future<bool> _performHandshakeSync() async {
-    final completer = Completer<bool>();
     final cutter = CutterBluetoothService();
+    final serial = (cutter.serialNumber ?? '').trim();
+
+    String? preferred = MachineHandshake.normalizeAlgorithm(
+      cutter.successfulHandshakeType,
+    );
+    if ((preferred == null || preferred.isEmpty) && serial.isNotEmpty) {
+      preferred = MachineHandshake.normalizeAlgorithm(
+        await cutter.getCachedHandshake(serial),
+      );
+    }
+
+    final completer = Completer<bool>();
     final handshake = MachineHandshake(
       cutter,
+      preferredAlgorithm: preferred,
+      handshakeMode: 'sync',
+      persistOnSuccess: true,
       onStatusUpdate: (_) {},
       onHandshakeComplete: (success) {
         if (!completer.isCompleted) completer.complete(success);
@@ -119,8 +133,10 @@ class ProfileScreen extends StatelessWidget {
     );
     handshake.startHandshake();
     try {
+      final timeoutSeconds =
+          preferred == MachineHandshake.algoRockspace ? 25 : 20;
       return await completer.future.timeout(
-        const Duration(seconds: 15),
+        Duration(seconds: timeoutSeconds),
         onTimeout: () => false,
       );
     } finally {
@@ -166,10 +182,10 @@ class ProfileScreen extends StatelessWidget {
 
     try {
       final serial = cutter.serialNumber?.toUpperCase() ?? '';
-      final isPlt = serial.startsWith("DQ") || serial.startsWith("DX") || serial.startsWith("LH");
-      final ok = isPlt
-          ? await cutter.performPrintHandshakeDQ()
-          : await _performHandshakeSync();
+      final isPlt = serial.startsWith("DQ") ||
+          serial.startsWith("DX") ||
+          serial.startsWith("LH");
+      final ok = await _performHandshakeSync();
       if (!ok) {
         throw Exception('فشل الهاند شيك');
       }
@@ -427,8 +443,7 @@ class ProfileScreen extends StatelessWidget {
     String label,
     String code,
   ) {
-    final bool isSelected =
-        provider.locale?.languageCode == code ||
+    final bool isSelected = provider.locale?.languageCode == code ||
         (provider.locale == null &&
             Localizations.localeOf(context).languageCode == code);
 
@@ -437,9 +452,8 @@ class ProfileScreen extends StatelessWidget {
         provider.setLocale(Locale(code));
       },
       style: ElevatedButton.styleFrom(
-        backgroundColor: isSelected
-            ? const Color(0xFF00FF88)
-            : const Color(0xFF1E1E1E),
+        backgroundColor:
+            isSelected ? const Color(0xFF00FF88) : const Color(0xFF1E1E1E),
         foregroundColor: isSelected ? Colors.black : Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       ),

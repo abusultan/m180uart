@@ -95,9 +95,9 @@ class AppStrings {
     'turn_on_bluetooth_msg':
         'Please turn on Bluetooth to scan for available cutting machines.',
     'turn_on_bluetooth_btn': 'Turn On Bluetooth',
-    'connect_required_title': 'Bluetooth Connection Required',
+    'connect_required_title': 'Machine Connection Required',
     'connect_required_msg':
-        'You must connect to a cutting machine via Bluetooth to access categories.',
+        'You must connect to the cutter through the internal serial port to access categories.',
     'go_to_connect': 'Go to Connect',
     'search_hint': 'Search Categories or Products...',
     'cart': 'Cart',
@@ -252,9 +252,9 @@ class AppStrings {
     'bluetooth_is_off': 'البلوتوث مغلق',
     'turn_on_bluetooth_msg': 'الرجاء تشغيل البلوتوث للبحث عن القواطع المتاحة.',
     'turn_on_bluetooth_btn': 'تشغيل البلوتوث',
-    'connect_required_title': 'يلزم الاتصال بالبلوتوث',
+    'connect_required_title': 'يلزم الاتصال بالماكينة',
     'connect_required_msg':
-        'يجب عليك الاتصال بماكنة القص عبر البلوتوث للوصول إلى التصنيفات.',
+        'يجب الاتصال بماكينة القص عبر المنفذ التسلسلي الداخلي للوصول إلى التصنيفات.',
     'go_to_connect': 'الذهاب للاتصال',
     'search_hint': 'بحث عن تصنيفات أو منتجات...',
     'cart': 'السلة',

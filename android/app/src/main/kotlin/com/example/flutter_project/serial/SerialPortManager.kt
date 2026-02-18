@@ -19,12 +19,15 @@ class SerialPortManager {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var eventSink: EventChannel.EventSink? = null
 
+    @Synchronized
     fun setEventSink(sink: EventChannel.EventSink?) {
         eventSink = sink
     }
 
+    @Synchronized
     fun isOpen(): Boolean = serialPort != null && running.get()
 
+    @Synchronized
     fun open(path: String?, baud: Int): Boolean {
         val portPath = if (path.isNullOrBlank()) defaultPortPath() else path
         close()
@@ -35,11 +38,13 @@ class SerialPortManager {
         return true
     }
 
+    @Synchronized
     fun write(bytes: ByteArray) {
         output?.write(bytes)
         output?.flush()
     }
 
+    @Synchronized
     fun close() {
         running.set(false)
         readThread?.interrupt()

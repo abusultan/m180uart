@@ -6,6 +6,16 @@
 class EncryptionUtil {
   // 32-bit mask for emulating Java's int behavior
   static const int MASK_32 = 0xFFFFFFFF;
+  static const int _SIGN_BIT = 0x80000000;
+
+  /// Casts to signed 32-bit int (Java int behavior).
+  static int _toInt32(int value) {
+    final masked = value & MASK_32;
+    if ((masked & _SIGN_BIT) != 0) {
+      return masked - 0x100000000;
+    }
+    return masked;
+  }
 
   /// The "New" Handshake (Sunshine)
   /// Corresponds to User's 'handshakeNew'
@@ -44,6 +54,61 @@ class EncryptionUtil {
     val = (val ^ 1092948257) & MASK_32;
     val = (val - 1361593975) & MASK_32;
     val = (val ^ 309809476) & MASK_32;
+    return val & MASK_32;
+  }
+
+  /// Rockspace SN-based handshake.
+  /// Port of:
+  /// snCalculate(String pid, String sn)
+  /// Returns unsigned 32-bit result.
+  static int getRockspaceSnHandshake({
+    required String pid,
+    required String sn,
+  }) {
+    final pidCodes = pid.codeUnits;
+    final snCodes = sn.codeUnits;
+    final pid20 = List<int>.filled(20, 0);
+
+    final copyCount = pidCodes.length < 20 ? pidCodes.length : 20;
+    for (int idx = 0; idx < copyCount; idx++) {
+      pid20[idx] = pidCodes[idx];
+    }
+
+    int i = 0;
+    int i2 = 0;
+    int i3 = 0;
+
+    for (int idx = 0; idx < 20; idx++) {
+      final c = pid20[idx];
+      i = _toInt32(i + c);
+      i2 = _toInt32(i2 - c);
+
+      final mix = _toInt32(_toInt32(i2 << 16) + i);
+      final step = _toInt32(_toInt32(mix + 579428743) ^ -2074003131);
+      i3 = _toInt32(i3 + step);
+    }
+
+    for (int idx = 0; idx < snCodes.length; idx++) {
+      final c = snCodes[idx];
+      i = _toInt32(i - c);
+      i2 = _toInt32(i2 + c);
+
+      final mix = _toInt32(_toInt32(i2 << 16) + i);
+      final step = _toInt32(_toInt32(mix + 421664280) ^ 558379537);
+      i3 = _toInt32(i3 + step);
+    }
+
+    return i3 & MASK_32;
+  }
+
+  /// Rockspace RCMD challenge handshake:
+  /// l ^= 421820515; l += 915960850; l ^= 913393031; l += 1418168705;
+  static int getRockspaceChallenge(int challenge) {
+    int val = challenge & MASK_32;
+    val = _toInt32(val ^ 421820515);
+    val = _toInt32(val + 915960850);
+    val = _toInt32(val ^ 913393031);
+    val = _toInt32(val + 1418168705);
     return val & MASK_32;
   }
 

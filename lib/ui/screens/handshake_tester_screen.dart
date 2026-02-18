@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../../services/bluetooth_service.dart';
 import '../../utils/encryption_util.dart';
 import 'dart:async';
-import 'dart:math';
 
 class HandshakeTesterScreen extends StatefulWidget {
   final String deviceId;
@@ -28,14 +27,9 @@ class _HandshakeTesterScreenState extends State<HandshakeTesterScreen> {
   final ScrollController _scrollController = ScrollController();
 
   final List<AlgorithmTest> _algorithms = [
-    AlgorithmTest(name: 'HandshakeNew (Old2)', type: AlgoType.handshakeNew),
-    AlgorithmTest(name: 'HandshakeOldV1', type: AlgoType.handshakeOldV1),
-    AlgorithmTest(name: 'HandshakeOldV3', type: AlgoType.handshakeOldV3),
-    AlgorithmTest(name: 'SUNSHINE (New)', type: AlgoType.sunshine),
-    AlgorithmTest(name: 'DEVIA (New)', type: AlgoType.devia),
-    AlgorithmTest(name: 'SY (New)', type: AlgoType.sy),
-    AlgorithmTest(name: 'CUTTER (New)', type: AlgoType.cutter),
-    AlgorithmTest(name: 'Default (New)', type: AlgoType.defaultNew),
+    AlgorithmTest(name: 'PassWord2 (Primary)', type: AlgoType.handshakeNew),
+    AlgorithmTest(name: 'OldPassWord', type: AlgoType.handshakeOldV1),
+    AlgorithmTest(name: 'PassWord', type: AlgoType.handshakeOldV3),
   ];
 
   StreamSubscription? _dataSubscription;
@@ -96,7 +90,9 @@ class _HandshakeTesterScreenState extends State<HandshakeTesterScreen> {
     print("📨 Processing: $message");
 
     // Parse Serial Number from CBM/PID/RPID or bare serial
-    if (message.contains("CBM=") || message.contains("PID=") || message.contains("RPID=")) {
+    if (message.contains("CBM=") ||
+        message.contains("PID=") ||
+        message.contains("RPID=")) {
       try {
         final cleaned = message.replaceAll(";", "");
         final parts = cleaned.split("=");
@@ -189,7 +185,7 @@ class _HandshakeTesterScreenState extends State<HandshakeTesterScreen> {
   Future<void> _testAlgorithm(AlgorithmTest algo) async {
     if (_currentChallenge == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('لا يوجد Challenge! أرسل BD:9 أولاً')),
+        const SnackBar(content: Text('لا يوجد Challenge! أرسل BD:10 أولاً')),
       );
       return;
     }
@@ -216,27 +212,13 @@ class _HandshakeTesterScreenState extends State<HandshakeTesterScreen> {
         return EncryptionUtil.getHandshakeOldV1(challenge);
       case AlgoType.handshakeOldV3:
         return EncryptionUtil.getHandshakeOldV3(challenge);
-      case AlgoType.sunshine:
-        return EncryptionUtil.getSunshinePassword(challenge, "SUNSHINE");
-      case AlgoType.devia:
-        return EncryptionUtil.getSunshinePassword(challenge, "DEVIA");
-      case AlgoType.sy:
-        return EncryptionUtil.getSunshinePassword(challenge, "SY");
-      case AlgoType.cutter:
-        return EncryptionUtil.getSunshinePassword(challenge, "CUTTER");
-      case AlgoType.defaultNew:
-        return EncryptionUtil.getSunshinePassword(challenge, "");
     }
   }
 
   void _requestNewChallenge() {
-    // Generate proper 6-digit random (better compatibility than 10-digit)
-    final random = Random();
-    String randomStr = List.generate(6, (_) => random.nextInt(10)).join();
-
-    print("🔄 Requesting new challenge with BD:9,$randomStr;");
-    _bluetooth.write("BD:9,$randomStr;");
-    _addLog("TX", "BD:9,$randomStr;");
+    print('🔄 Requesting new challenge with BD:10;');
+    _bluetooth.write('BD:10;');
+    _addLog('TX', 'BD:10;');
 
     setState(() {
       _currentChallenge = null;
@@ -294,7 +276,7 @@ class _HandshakeTesterScreenState extends State<HandshakeTesterScreen> {
             ElevatedButton.icon(
               onPressed: _requestNewChallenge,
               icon: const Icon(Icons.refresh),
-              label: const Text('طلب Challenge جديد (BD:9)'),
+              label: const Text('طلب Challenge جديد (BD:10)'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF00FF88),
                 foregroundColor: Colors.black,
@@ -328,8 +310,8 @@ class _HandshakeTesterScreenState extends State<HandshakeTesterScreen> {
                           ? ElevatedButton(
                               onPressed:
                                   _currentChallenge != null && !_isTesting
-                                  ? () => _testAlgorithm(algo)
-                                  : null,
+                                      ? () => _testAlgorithm(algo)
+                                      : null,
                               child: const Text('اختبر'),
                             )
                           : null,
@@ -423,11 +405,6 @@ enum AlgoType {
   handshakeNew,
   handshakeOldV1,
   handshakeOldV3,
-  sunshine,
-  devia,
-  sy,
-  cutter,
-  defaultNew,
 }
 
 enum TestStatus { pending, testing, success, failed }
