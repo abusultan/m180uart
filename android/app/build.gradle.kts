@@ -5,7 +5,7 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-val appMinSdk = 22
+val appMinSdk = 23
 
 android {
     namespace = "com.example.flutter_project"
