@@ -14,6 +14,14 @@ void main() {
         HandshakeResponseResolver.algoOldPassWord,
       );
       expect(
+        HandshakeResponseResolver.normalizeAlgorithm('pass_u32'),
+        HandshakeResponseResolver.algoMechanicUart,
+      );
+      expect(
+        HandshakeResponseResolver.normalizeAlgorithm('dq_handshake'),
+        HandshakeResponseResolver.algoDQHandshake,
+      );
+      expect(
         HandshakeResponseResolver.normalizeAlgorithm('removed_handshake'),
         isNull,
       );
@@ -60,6 +68,26 @@ void main() {
           challenge: challenge,
         ),
         EncryptionUtil.getHandshakeOldV3(challenge),
+      );
+      expect(
+        HandshakeResponseResolver.resolveChallengeResponse(
+          algorithm: HandshakeResponseResolver.algoDQHandshake,
+          challenge: challenge,
+        ),
+        EncryptionUtil.getDQHandshake(challenge),
+      );
+      expect(
+        HandshakeResponseResolver.resolveChallengeResponse(
+          algorithm: HandshakeResponseResolver.algoMechanicUart,
+          challenge: challenge,
+        ),
+        EncryptionUtil.getDQHandshake(challenge),
+      );
+      expect(
+        HandshakeResponseResolver.resolveMechanicVerificationExpected(
+          challenge,
+        ),
+        EncryptionUtil.getPassU32Expected(challenge),
       );
     });
   });

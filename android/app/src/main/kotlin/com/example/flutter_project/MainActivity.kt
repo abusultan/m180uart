@@ -9,6 +9,7 @@ import android.provider.Settings
 import android.os.Looper
 import android.os.Handler
 import android.os.Build
+import android.os.Bundle
 import android.net.NetworkCapabilities
 import android.net.ConnectivityManager
 import android.net.wifi.WifiManager
@@ -42,6 +43,7 @@ class MainActivity : FlutterActivity() {
     private val wifiHandler = Handler(Looper.getMainLooper())
     private var wifiReturnInitialConnected = false
     private var wifiReturnInitialSsid: String? = null
+    private var launcherEnsurePosted = false
 
     private fun decodeSvg(bytes: ByteArray): String {
         if (bytes.size >= 2) {
@@ -119,6 +121,101 @@ class MainActivity : FlutterActivity() {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
         startActivity(launch)
+    }
+
+    private fun buildHomeIntent(): Intent {
+        return Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_HOME)
+            addCategory(Intent.CATEGORY_DEFAULT)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+    }
+
+    private fun isDefaultLauncherInternal(): Boolean {
+        return try {
+            val resolved = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.resolveActivity(
+                    buildHomeIntent(),
+                    PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.resolveActivity(buildHomeIntent(), PackageManager.MATCH_DEFAULT_ONLY)
+            } ?: return false
+
+            val homePackage = resolved.activityInfo?.packageName ?: return false
+            homePackage == packageName
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun queryHomePackages(): List<String> {
+        return try {
+            val infos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.queryIntentActivities(
+                    buildHomeIntent(),
+                    PackageManager.ResolveInfoFlags.of(0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.queryIntentActivities(buildHomeIntent(), 0)
+            }
+
+            infos
+                .mapNotNull { it.activityInfo?.packageName }
+                .filter { it.isNotBlank() }
+                .distinct()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun promptHomeSelection() {
+        try {
+            startActivity(buildHomeIntent())
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun tryForceDefaultLauncherWithRoot(): Boolean {
+        val otherHomePackages = queryHomePackages()
+            .filter { it != packageName && it != "android" }
+
+        if (otherHomePackages.isEmpty()) {
+            return false
+        }
+
+        runRootCommand("pm enable \"$packageName\" >/dev/null 2>&1 || true")
+
+        var changed = false
+        for (launcherPackage in otherHomePackages) {
+            val disabled = runRootCommand(
+                "pm disable \"$launcherPackage\" >/dev/null 2>&1 || pm disable-user \"$launcherPackage\" >/dev/null 2>&1"
+            )
+            if (disabled) {
+                changed = true
+            }
+        }
+
+        if (changed) {
+            promptHomeSelection()
+            return true
+        }
+
+        return false
+    }
+
+    private fun ensureLauncherDefaultOnStartup() {
+        if (launcherEnsurePosted) return
+        launcherEnsurePosted = true
+
+        wifiHandler.postDelayed({
+            if (isFinishing || isDestroyed) return@postDelayed
+            if (isDefaultLauncherInternal()) return@postDelayed
+            if (tryForceDefaultLauncherWithRoot()) return@postDelayed
+            promptHomeSelection()
+        }, 250L)
     }
 
     private fun canInstallPackagesNow(): Boolean {
@@ -252,10 +349,18 @@ class MainActivity : FlutterActivity() {
         }
 
         val escapedPath = path.replace("\"", "\\\"")
-        val commands = arrayOf(
-            "pm install -r -d -g \"$escapedPath\"",
-            "cmd package install -r -d -g \"$escapedPath\""
+        val pmFlags = mutableListOf("-r", "-d")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            pmFlags.add("-g")
+        }
+
+        val commands = mutableListOf(
+            "pm install ${pmFlags.joinToString(" ")} \"$escapedPath\""
         )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            commands.add("cmd package install ${pmFlags.joinToString(" ")} \"$escapedPath\"")
+        }
+
         for (command in commands) {
             if (runRootCommand(command)) {
                 return true
@@ -306,6 +411,11 @@ class MainActivity : FlutterActivity() {
             returnToApp()
         }
         wifiHandler.postDelayed(wifiReturnTimeout!!, (timeoutSeconds.coerceAtLeast(5) * 1000L))
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        ensureLauncherDefaultOnStartup()
     }
 
 

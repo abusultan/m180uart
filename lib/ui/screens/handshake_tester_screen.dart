@@ -39,6 +39,14 @@ class _HandshakeTesterScreenState extends State<HandshakeTesterScreen> {
       name: 'PassWord',
       algorithm: HandshakeResponseResolver.algoPassWord,
     ),
+    AlgorithmTest(
+      name: 'DQ Handshake',
+      algorithm: HandshakeResponseResolver.algoDQHandshake,
+    ),
+    AlgorithmTest(
+      name: 'Mechanic UART',
+      algorithm: HandshakeResponseResolver.algoMechanicUart,
+    ),
   ];
 
   StreamSubscription? _dataSubscription;

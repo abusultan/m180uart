@@ -8,7 +8,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/cut_settings_service.dart';
 import '../../services/bluetooth_service.dart';
 import '../../services/app_settings_service.dart';
-import '../../services/api_service.dart';
 import '../../core/machine_handshake.dart';
 
 Future<double?> showAngleDialog(
@@ -67,11 +66,8 @@ class CutSettingsScreen extends StatefulWidget {
 class _CutSettingsScreenState extends State<CutSettingsScreen> {
   static const String _handshakeAlgoKey = 'manual_handshake_algorithm_ui';
   static const String _forceLandscapeKey = 'force_landscape';
-  static const String _testPltUrlKey = 'test_plt_url';
   static const String _defaultUpdateUrl =
       'https://anti-crash.com/update.apk';
-  static const String _defaultTestPltUrl =
-      'https://cutter.vr186.com/file/54f03c97bff3ffd073668.plt';
   static const String _sensitivePasswordKey = 'sensitive_settings_password';
   static const String _defaultSensitivePassword = '2580';
 
@@ -80,6 +76,8 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
     {"label": "PassWord2 (Primary)", "value": "HANDSHAKE_NEW"},
     {"label": "OldPassWord", "value": "OLD_V1"},
     {"label": "PassWord", "value": "OLD_V3"},
+    {"label": "DQ Handshake", "value": "DQ_HANDSHAKE"},
+    {"label": "Mechanic UART", "value": "MECHANIC_UART"},
   ];
 
   final CutSettingsService _settings = CutSettingsService();
@@ -94,9 +92,7 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
   double _angleValue = CutSettingsService.defaultAngleValue;
   bool _forceLandscape = false;
   String _manualHandshakeAlgorithm = MachineHandshake.algoSunshine;
-  final TextEditingController _testPltUrlController = TextEditingController();
   bool _isUpdating = false;
-  bool _isSendingTestPlt = false;
   double _downloadProgress = 0;
   String _appVersionLabel = '';
 
@@ -107,10 +103,7 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
   }
 
   @override
-  void dispose() {
-    _testPltUrlController.dispose();
-    super.dispose();
-  }
+  void dispose() => super.dispose();
 
   Future<void> _load() async {
     final speed = await _settings.getSpeed();
@@ -122,17 +115,10 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     final savedAlgo = prefs.getString(_handshakeAlgoKey);
     final forceLandscape = prefs.getBool(_forceLandscapeKey) ?? false;
-    final savedTestPltUrl = (prefs.getString(_testPltUrlKey) ?? '').trim();
     final effectiveAlgo =
         _handshakeAlgorithms.any((a) => a['value'] == savedAlgo)
             ? savedAlgo
             : null;
-    final effectiveTestPltUrl =
-        savedTestPltUrl.isEmpty ? _defaultTestPltUrl : savedTestPltUrl;
-    if (savedTestPltUrl.isEmpty) {
-      await prefs.setString(_testPltUrlKey, _defaultTestPltUrl);
-    }
-    _testPltUrlController.text = effectiveTestPltUrl;
     if (!mounted) return;
     setState(() {
       _speed = speed;
@@ -403,194 +389,6 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
     return null;
   }
 
-  Future<void> _saveTestPltUrl() async {
-    final typedUrl = _testPltUrlController.text.trim();
-    final url = typedUrl.isEmpty ? _defaultTestPltUrl : typedUrl;
-    if (typedUrl.isEmpty) {
-      _testPltUrlController.text = url;
-    }
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_testPltUrlKey, url);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('PLT test link saved.'),
-        backgroundColor: Color(0xFF00FF88),
-      ),
-    );
-  }
-
-  Future<bool> _performHandshakeSync() async {
-    final cutter = _bluetooth;
-    final serial = (cutter.serialNumber ?? '').trim();
-
-    String? preferred = MachineHandshake.normalizeAlgorithm(
-      cutter.successfulHandshakeType,
-    );
-    if ((preferred == null || preferred.isEmpty) && serial.isNotEmpty) {
-      preferred = MachineHandshake.normalizeAlgorithm(
-        await cutter.getCachedHandshake(serial),
-      );
-    }
-
-    final completer = Completer<bool>();
-    final handshake = MachineHandshake(
-      cutter,
-      preferredAlgorithm: preferred,
-      handshakeMode: 'sync',
-      persistOnSuccess: true,
-      onStatusUpdate: (_) {},
-      onHandshakeComplete: (success) {
-        if (!completer.isCompleted) {
-          completer.complete(success);
-        }
-      },
-    );
-
-    handshake.startHandshake();
-    try {
-      return await completer.future.timeout(
-        const Duration(seconds: 20),
-        onTimeout: () => false,
-      );
-    } finally {
-      handshake.dispose();
-    }
-  }
-
-  Future<void> _sendTestPltFromUrl() async {
-    if (_isSendingTestPlt) return;
-    if (!_bluetooth.isConnected) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please connect to the cutter first.'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    final typedUrl = _testPltUrlController.text.trim();
-    final url = typedUrl.isEmpty ? _defaultTestPltUrl : typedUrl;
-    if (!(url.startsWith('http://') || url.startsWith('https://'))) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter a valid PLT link.'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_testPltUrlKey, url);
-
-    if (!mounted) return;
-    setState(() {
-      _isSendingTestPlt = true;
-    });
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const AlertDialog(
-        backgroundColor: Color(0xFF1E1E1E),
-        content: Row(
-          children: [
-            SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            SizedBox(width: 16),
-            Expanded(
-              child: Text(
-                'Downloading and sending test PLT...',
-                style: TextStyle(color: Colors.white),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    try {
-      final serial = (_bluetooth.serialNumber ?? '').toUpperCase();
-      final isPltMachine = serial.startsWith('DQ') ||
-          serial.startsWith('DX') ||
-          serial.startsWith('LH');
-
-      final ok = await _performHandshakeSync();
-      if (!ok) {
-        throw Exception('Handshake failed');
-      }
-
-      final isPhonefilmMode = _bluetooth.lastHandshakeMode == 'phonefilm';
-      final file = await ApiService().downloadFile(url);
-      if (file == null) {
-        throw Exception('Failed to download file');
-      }
-      final bytes = await file.readAsBytes();
-      if (bytes.isEmpty) {
-        throw Exception('Downloaded file is empty');
-      }
-
-      if (isPltMachine) {
-        await _bluetooth.writeBytes(
-          bytes,
-          chunkSize: bytes.length,
-          packetDelayMs: 0,
-        );
-      } else {
-        const blockSize = 2048;
-        final delayMs = isPhonefilmMode ? 400 : 2;
-        int offset = 0;
-        while (offset < bytes.length) {
-          int end = offset + blockSize;
-          if (end > bytes.length) end = bytes.length;
-          final chunk = bytes.sublist(offset, end);
-          await _bluetooth.writeBytes(
-            chunk,
-            chunkSize: chunk.length,
-            packetDelayMs: 0,
-          );
-          if (delayMs > 0) {
-            await Future.delayed(Duration(milliseconds: delayMs));
-          }
-          offset = end;
-        }
-      }
-
-      if (mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Test PLT sent successfully.'),
-            backgroundColor: Color(0xFF00FF88),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to send test PLT: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSendingTestPlt = false;
-        });
-      }
-    }
-  }
-
   Future<void> _checkForUpdateAndInstall() async {
     if (_isUpdating) return;
 
@@ -675,16 +473,22 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
       }
 
       final installedSilently = await _appSettings.installApkSilently(apkPath);
+      final openedInstaller =
+          installedSilently ? false : await _appSettings.installApk(apkPath);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             installedSilently
                 ? 'Update installed automatically.'
-                : 'Automatic install failed. Root/device-owner permission is required.',
+                : openedInstaller
+                    ? 'Automatic install failed. Opened package installer instead.'
+                    : 'Automatic install failed. Root/device-owner permission is required.',
           ),
           backgroundColor:
-              installedSilently ? const Color(0xFF00FF88) : Colors.red,
+              installedSilently || openedInstaller
+                  ? const Color(0xFF00FF88)
+                  : Colors.red,
         ),
       );
     } catch (e) {
@@ -1214,60 +1018,6 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
                                   color: Colors.grey, fontSize: 12),
                             ),
                           ],
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Card(
-                    color: const Color(0xFF1E1E1E),
-                    child: Padding(
-                      padding: const EdgeInsets.all(14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'PLT Test Sender',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          TextField(
-                            controller: _testPltUrlController,
-                            style: const TextStyle(color: Colors.white),
-                            decoration: const InputDecoration(
-                              labelText: 'PLT test link',
-                              labelStyle: TextStyle(color: Colors.grey),
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  onPressed: _saveTestPltUrl,
-                                  icon: const Icon(Icons.save),
-                                  label: const Text('Save Link'),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: ElevatedButton.icon(
-                                  onPressed: _isSendingTestPlt
-                                      ? null
-                                      : _sendTestPltFromUrl,
-                                  icon: const Icon(Icons.send),
-                                  label: Text(
-                                    _isSendingTestPlt
-                                        ? 'Sending...'
-                                        : 'Send Test PLT',
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
                         ],
                       ),
                     ),

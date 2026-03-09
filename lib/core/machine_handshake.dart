@@ -13,6 +13,10 @@ class MachineHandshake {
   static const String algoOldPassWord =
       HandshakeResponseResolver.algoOldPassWord;
   static const String algoPassWord = HandshakeResponseResolver.algoPassWord;
+  static const String algoDQHandshake =
+      HandshakeResponseResolver.algoDQHandshake;
+  static const String algoMechanicUart =
+      HandshakeResponseResolver.algoMechanicUart;
 
   static const List<String> sunshineAlgorithms =
       HandshakeResponseResolver.sunshineAlgorithms;
@@ -42,9 +46,14 @@ class MachineHandshake {
   bool _isAuthenticated = false;
   bool _finished = false;
   int _challengeRetryCount = 0;
+  bool _awaitingMechanicVerification = false;
+  bool _mechanicVerificationPassed = false;
+  int? _mechanicVerificationSeed;
   static const int _maxChallengeRetriesPerAlgorithm = 1;
   static const Duration _challengeTimeout = Duration(milliseconds: 1400);
   static const Duration _authAckTimeout = Duration(milliseconds: 900);
+  static const Duration _mechanicVerificationTimeout =
+      Duration(milliseconds: 1800);
 
   MachineHandshake(
     this._bluetooth, {
@@ -104,10 +113,20 @@ class MachineHandshake {
     _awaitingAuthAck = false;
     _messageBuffer = '';
     _challengeRetryCount = 0;
+    _awaitingMechanicVerification = false;
+    _mechanicVerificationPassed = false;
+    _mechanicVerificationSeed = null;
   }
 
   void _requestChallenge() {
     if (_finished || _isAuthenticated || !_bluetooth.isConnected) return;
+
+    if (_currentAlgoIndex < _algorithms.length &&
+        _algorithms[_currentAlgoIndex] == algoMechanicUart &&
+        !_mechanicVerificationPassed) {
+      _requestMechanicVerification();
+      return;
+    }
 
     _awaitingAuthAck = false;
     _currentChallenge = null;
@@ -129,6 +148,29 @@ class MachineHandshake {
     });
   }
 
+  void _requestMechanicVerification() {
+    if (_finished || _isAuthenticated || !_bluetooth.isConnected) return;
+
+    _awaitingAuthAck = false;
+    _currentChallenge = null;
+    _awaitingMechanicVerification = true;
+    _mechanicVerificationSeed = Random().nextInt(1000000000);
+
+    onStatusUpdate('Verifying Mechanic UART...');
+    _safeWrite('BD:9,8,${_mechanicVerificationSeed!};');
+
+    _challengeTimer?.cancel();
+    _challengeTimer = Timer(_mechanicVerificationTimeout, () {
+      if (_finished || _isAuthenticated) return;
+      if (_awaitingMechanicVerification) {
+        _awaitingMechanicVerification = false;
+        _mechanicVerificationPassed = false;
+        _mechanicVerificationSeed = null;
+        _tryNextAlgorithm();
+      }
+    });
+  }
+
   void _handleData(String data) {
     if (_finished) return;
 
@@ -146,6 +188,11 @@ class MachineHandshake {
   }
 
   void _processMessage(String message) {
+    if (_awaitingMechanicVerification && _isMechanicVerificationResponse(message)) {
+      _handleMechanicVerificationResponse(message);
+      return;
+    }
+
     if (message.contains('RCMD=12,0')) {
       _markSuccess();
       return;
@@ -168,6 +215,39 @@ class MachineHandshake {
         _sendCurrentAlgorithm();
       }
     }
+  }
+
+  bool _isMechanicVerificationResponse(String message) {
+    return message.contains('RCMD=9') ||
+        message.startsWith('9,') ||
+        message.contains(',9,');
+  }
+
+  void _handleMechanicVerificationResponse(String message) {
+    _challengeTimer?.cancel();
+
+    final expected = _mechanicVerificationSeed == null
+        ? null
+        : HandshakeResponseResolver.resolveMechanicVerificationExpected(
+            _mechanicVerificationSeed!,
+          );
+    final returned = _extractMechanicVerificationValue(message);
+    final isValid = returned == null ||
+        expected == null ||
+        (returned & 0xFFFFFFFF) == (expected & 0xFFFFFFFF);
+
+    _awaitingMechanicVerification = false;
+    _mechanicVerificationSeed = null;
+
+    if (!isValid) {
+      _mechanicVerificationPassed = false;
+      _tryNextAlgorithm();
+      return;
+    }
+
+    _mechanicVerificationPassed = true;
+    onStatusUpdate('Mechanic UART verified...');
+    _requestChallenge();
   }
 
   void _sendCurrentAlgorithm() {
@@ -225,6 +305,9 @@ class MachineHandshake {
     _awaitingAuthAck = false;
     _ackTimer?.cancel();
     _challengeRetryCount = 0;
+    _awaitingMechanicVerification = false;
+    _mechanicVerificationPassed = false;
+    _mechanicVerificationSeed = null;
     _currentAlgoIndex++;
 
     if (_currentAlgoIndex < _algorithms.length) {
@@ -267,6 +350,31 @@ class MachineHandshake {
       final idx = message.indexOf(',11,');
       if (idx != -1) {
         final tail = message.substring(idx + 4).replaceAll(';', '');
+        final parts = tail.split(',');
+        if (parts.isNotEmpty) return int.tryParse(parts.first.trim());
+      }
+    } catch (_) {}
+
+    return null;
+  }
+
+  int? _extractMechanicVerificationValue(String message) {
+    try {
+      if (message.contains('RCMD=9,')) {
+        final start = message.indexOf('RCMD=9,') + 7;
+        var end = message.indexOf(';', start);
+        if (end == -1) end = message.length;
+        return int.tryParse(message.substring(start, end).trim());
+      }
+
+      if (message.startsWith('9,')) {
+        final parts = message.replaceAll(';', '').split(',');
+        if (parts.length >= 2) return int.tryParse(parts[1].trim());
+      }
+
+      final idx = message.indexOf(',9,');
+      if (idx != -1) {
+        final tail = message.substring(idx + 3).replaceAll(';', '');
         final parts = tail.split(',');
         if (parts.isNotEmpty) return int.tryParse(parts.first.trim());
       }

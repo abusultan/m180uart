@@ -218,6 +218,42 @@ class CutterBluetoothService {
     return stored;
   }
 
+  String? _resolveBackendMachineDisplayName(
+    SharedPreferences prefs,
+    String serial,
+    String? handshakeAlgorithm,
+  ) {
+    final normalizedAlgorithm = _normalizeHandshakeAlgorithm(handshakeAlgorithm);
+    if (normalizedAlgorithm == HandshakeResponseResolver.algoMechanicUart) {
+      return 'Mechanic UART';
+    }
+
+    final upper = serial.trim().toUpperCase();
+    if (upper.isEmpty) return null;
+
+    if (upper.startsWith('SS') ||
+        upper.startsWith('CUTTER') ||
+        upper.startsWith('SUNSHINE')) {
+      return 'Sunshine UART';
+    }
+    if (upper.startsWith('DQ')) return 'DQ UART';
+    if (upper.startsWith('LH')) return 'LH UART';
+    if (upper.startsWith('DX') || upper.startsWith('DH')) return 'DX UART';
+
+    final stored = (prefs.getString('machine_type_$upper') ?? '').trim();
+    if (stored.isEmpty || stored == 'unknown') return null;
+    if (stored == 'ss_like' || stored.toLowerCase() == 'sunshine') {
+      return 'Sunshine UART';
+    }
+    if (stored == 'dq_like' || stored.toLowerCase() == 'crust') {
+      return 'DQ UART';
+    }
+    if (stored.toLowerCase() == 'hebeshi') return 'LH UART';
+    if (stored == 'AtB' || stored.toLowerCase() == 'atb') return 'DX UART';
+    if (stored.toLowerCase().contains('uart')) return stored;
+    return '$stored UART';
+  }
+
   void setSuppressAutoHandshake(bool suppress) {
     _suppressAutoHandshake = suppress;
   }
@@ -254,6 +290,11 @@ class CutterBluetoothService {
 
       if (_serialNumber != null && _serialNumber!.isNotEmpty) {
         final machineType = _resolveBackendMachineType(prefs, _serialNumber!);
+        final machineName = _resolveBackendMachineDisplayName(
+          prefs,
+          _serialNumber!,
+          normalizedAgentType,
+        );
         await prefs.setString(
           'handshake_algo_$_serialNumber',
           normalizedAgentType,
@@ -270,6 +311,7 @@ class CutterBluetoothService {
           _serialNumber!,
           normalizedAgentType,
           machineType: machineType,
+          machineName: machineName,
         );
       }
     } catch (_) {}

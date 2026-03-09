@@ -456,10 +456,13 @@ class ApiService {
     String serialNumber,
     String handshake, {
     String? machineType,
+    String? machineName,
   }) async {
     try {
       final cleanedSerial = serialNumber.trim();
       final cleanedHandshake = handshake.trim();
+      final cleanedMachineType = (machineType ?? '').trim();
+      final cleanedMachineName = (machineName ?? '').trim();
       final payload = <String, dynamic>{
         'serial_number': cleanedSerial,
         'hand_shake': cleanedHandshake,
@@ -468,12 +471,18 @@ class ApiService {
         'algorithm': cleanedHandshake,
         'agent_type': cleanedHandshake,
       };
-      if (machineType != null && machineType.isNotEmpty) {
-        payload['type_machine'] = machineType;
-        payload['name'] = machineType;
-        payload['machine_name'] = machineType;
-        payload['model'] = machineType;
-        payload['device_name'] = machineType;
+      if (cleanedMachineType.isNotEmpty) {
+        payload['type_machine'] = cleanedMachineType;
+      }
+
+      final resolvedDisplayName = cleanedMachineName.isNotEmpty
+          ? cleanedMachineName
+          : cleanedMachineType;
+      if (resolvedDisplayName.isNotEmpty) {
+        payload['name'] = resolvedDisplayName;
+        payload['machine_name'] = resolvedDisplayName;
+        payload['model'] = resolvedDisplayName;
+        payload['device_name'] = resolvedDisplayName;
       }
 
       final response = await _dio.post(

@@ -274,6 +274,14 @@ class _MainScreenState extends State<MainScreen> {
                         value: 'OLD_V3',
                         child: Text('PassWord'),
                       ),
+                      DropdownMenuItem(
+                        value: 'DQ_HANDSHAKE',
+                        child: Text('DQ Handshake'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'MECHANIC_UART',
+                        child: Text('Mechanic UART'),
+                      ),
                     ],
                     onChanged: (value) {
                       if (value == null) return;

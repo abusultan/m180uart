@@ -22,6 +22,8 @@ class _ScanScreenState extends State<ScanScreen> {
     {"label": "PassWord2 (Primary)", "value": "HANDSHAKE_NEW"},
     {"label": "OldPassWord", "value": "OLD_V1"},
     {"label": "PassWord", "value": "OLD_V3"},
+    {"label": "DQ Handshake", "value": "DQ_HANDSHAKE"},
+    {"label": "Mechanic UART", "value": "MECHANIC_UART"},
   ];
 
   @override

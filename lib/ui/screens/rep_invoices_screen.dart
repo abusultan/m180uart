@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 
 class RepInvoicesScreen extends StatefulWidget {
   const RepInvoicesScreen({super.key});
@@ -426,34 +425,7 @@ class _RepInvoicesScreenState extends State<RepInvoicesScreen> {
   }
 
   Future<String?> _fetchLocation() async {
-    try {
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        return null;
-      }
-
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        return null;
-      }
-
-      try {
-        final position = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high,
-        );
-        return '${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}';
-      } catch (_) {
-        final last = await Geolocator.getLastKnownPosition();
-        if (last == null) return null;
-        return '${last.latitude.toStringAsFixed(6)}, ${last.longitude.toStringAsFixed(6)}';
-      }
-    } catch (_) {
-      return null;
-    }
+    return null;
   }
 
   void _exportPdfMock(_SavedInvoice invoice) {
