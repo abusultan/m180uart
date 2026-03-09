@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import '../../services/bluetooth_service.dart';
-import '../../utils/encryption_util.dart';
 import 'dart:async';
+import '../../core/handshake_response_resolver.dart';
+import '../../services/bluetooth_service.dart';
 
 class HandshakeTesterScreen extends StatefulWidget {
   final String deviceId;
@@ -27,9 +27,18 @@ class _HandshakeTesterScreenState extends State<HandshakeTesterScreen> {
   final ScrollController _scrollController = ScrollController();
 
   final List<AlgorithmTest> _algorithms = [
-    AlgorithmTest(name: 'PassWord2 (Primary)', type: AlgoType.handshakeNew),
-    AlgorithmTest(name: 'OldPassWord', type: AlgoType.handshakeOldV1),
-    AlgorithmTest(name: 'PassWord', type: AlgoType.handshakeOldV3),
+    AlgorithmTest(
+      name: 'PassWord2 (Primary)',
+      algorithm: HandshakeResponseResolver.algoPassWord2,
+    ),
+    AlgorithmTest(
+      name: 'OldPassWord',
+      algorithm: HandshakeResponseResolver.algoOldPassWord,
+    ),
+    AlgorithmTest(
+      name: 'PassWord',
+      algorithm: HandshakeResponseResolver.algoPassWord,
+    ),
   ];
 
   StreamSubscription? _dataSubscription;
@@ -195,7 +204,7 @@ class _HandshakeTesterScreenState extends State<HandshakeTesterScreen> {
       _isTesting = true;
     });
 
-    int response = _calculateResponse(algo.type, _currentChallenge!);
+    final response = _calculateResponse(algo.algorithm, _currentChallenge!);
     print(
       "🧪 Testing ${algo.name}: Challenge=$_currentChallenge Response=$response",
     );
@@ -204,15 +213,11 @@ class _HandshakeTesterScreenState extends State<HandshakeTesterScreen> {
     _addLog("TX", "BD:12,$response; (${algo.name})");
   }
 
-  int _calculateResponse(AlgoType type, int challenge) {
-    switch (type) {
-      case AlgoType.handshakeNew:
-        return EncryptionUtil.getHandshakeNew(challenge);
-      case AlgoType.handshakeOldV1:
-        return EncryptionUtil.getHandshakeOldV1(challenge);
-      case AlgoType.handshakeOldV3:
-        return EncryptionUtil.getHandshakeOldV3(challenge);
-    }
+  int _calculateResponse(String algorithm, int challenge) {
+    return HandshakeResponseResolver.resolveChallengeResponse(
+      algorithm: algorithm,
+      challenge: challenge,
+    );
   }
 
   void _requestNewChallenge() {
@@ -391,20 +396,14 @@ class _HandshakeTesterScreenState extends State<HandshakeTesterScreen> {
 
 class AlgorithmTest {
   final String name;
-  final AlgoType type;
+  final String algorithm;
   TestStatus status;
 
   AlgorithmTest({
     required this.name,
-    required this.type,
+    required this.algorithm,
     this.status = TestStatus.pending,
   });
-}
-
-enum AlgoType {
-  handshakeNew,
-  handshakeOldV1,
-  handshakeOldV3,
 }
 
 enum TestStatus { pending, testing, success, failed }

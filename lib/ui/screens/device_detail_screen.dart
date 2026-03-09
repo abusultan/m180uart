@@ -881,10 +881,8 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     handshake.startHandshake();
 
     try {
-      final timeoutSeconds =
-          preferred == MachineHandshake.algoRockspace ? 25 : 20;
       return await completer.future.timeout(
-        Duration(seconds: timeoutSeconds),
+        const Duration(seconds: 20),
         onTimeout: () => false,
       );
     } finally {

@@ -435,78 +435,6 @@ class ApiService {
     }
   }
 
-  // --- Cart System ---
-
-  Future<Map<String, dynamic>?> addToCart(int goodId, int quantity) async {
-    try {
-      final formData = FormData.fromMap({
-        'good_id': goodId.toString(),
-        'quantity': quantity.toString(),
-      });
-      final response = await _dio.post('add-to-cart', data: formData);
-      if (response.statusCode == 200) return response.data;
-      return null;
-    } catch (e) {
-      print('Add to Cart Error: $e');
-      return null;
-    }
-  }
-
-  Future<Map<String, dynamic>?> getCart() async {
-    try {
-      final response = await _dio.get('get-cart');
-      if (response.statusCode == 200 && response.data != null) {
-        return response.data;
-      }
-      return null;
-    } catch (e) {
-      print('Get Cart Error: $e');
-      return null;
-    }
-  }
-
-  Future<Map<String, dynamic>?> removeFromCart(int goodId) async {
-    try {
-      final formData = FormData.fromMap({'good_id': goodId.toString()});
-      final response = await _dio.post('remove-from-cart', data: formData);
-      if (response.statusCode == 200) return response.data;
-      return null;
-    } catch (e) {
-      print('Remove from Cart Error: $e');
-      return null;
-    }
-  }
-
-  Future<Map<String, dynamic>?> updateCartQuantity(
-    int goodId,
-    int quantity,
-  ) async {
-    try {
-      final formData = FormData.fromMap({
-        'good_id': goodId.toString(),
-        'quantity': quantity.toString(),
-      });
-      final response = await _dio.post('update-quantity', data: formData);
-      if (response.statusCode == 200) return response.data;
-      return null;
-    } catch (e) {
-      print('Update Quantity Error: $e');
-      return null;
-    }
-  }
-
-  Future<Map<String, dynamic>?> checkout() async {
-    try {
-      final response = await _dio.post('checkout');
-      return {'success': response.statusCode == 200, 'data': response.data};
-    } catch (e) {
-      if (e is DioException && e.response != null) {
-        return {'success': false, 'message': e.response?.data['message']};
-      }
-      return {'success': false, 'message': e.toString()};
-    }
-  }
-
   // --- User ---
 
   Future<User?> getUserInfo() async {
@@ -524,11 +452,33 @@ class ApiService {
     }
   }
 
-  Future<bool> addDevice(String serialNumber, String handshake) async {
+  Future<bool> addDevice(
+    String serialNumber,
+    String handshake, {
+    String? machineType,
+  }) async {
     try {
+      final cleanedSerial = serialNumber.trim();
+      final cleanedHandshake = handshake.trim();
+      final payload = <String, dynamic>{
+        'serial_number': cleanedSerial,
+        'hand_shake': cleanedHandshake,
+        'handshake': cleanedHandshake,
+        'handShake': cleanedHandshake,
+        'algorithm': cleanedHandshake,
+        'agent_type': cleanedHandshake,
+      };
+      if (machineType != null && machineType.isNotEmpty) {
+        payload['type_machine'] = machineType;
+        payload['name'] = machineType;
+        payload['machine_name'] = machineType;
+        payload['model'] = machineType;
+        payload['device_name'] = machineType;
+      }
+
       final response = await _dio.post(
         'add-device',
-        data: {'serial_number': serialNumber, 'hand_shake': handshake},
+        data: payload,
         options: Options(contentType: Headers.formUrlEncodedContentType),
       );
 
@@ -551,7 +501,23 @@ class ApiService {
 
       print("Get Device Response: ${response.data}");
       if (response.data['success'] == true && response.data['data'] != null) {
-        return response.data['data']['hand_shake'];
+        final data = response.data['data'];
+        if (data is Map<String, dynamic>) {
+          final candidates = [
+            data['hand_shake'],
+            data['handshake'],
+            data['handShake'],
+            data['algorithm'],
+            data['agent_type'],
+            data['agent'],
+          ];
+          for (final value in candidates) {
+            final text = value?.toString().trim() ?? '';
+            if (text.isNotEmpty && text.toLowerCase() != 'null') {
+              return text;
+            }
+          }
+        }
       }
       return null;
     } catch (e) {

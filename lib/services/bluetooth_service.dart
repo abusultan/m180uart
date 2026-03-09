@@ -1,9 +1,8 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../core/handshake_response_resolver.dart';
 import 'api_service.dart';
-import '../utils/encryption_util.dart';
 
 class CutterBluetoothService {
   static final CutterBluetoothService _instance =
@@ -35,8 +34,6 @@ class CutterBluetoothService {
   Object? get connectedDevice => _connectedDevice;
   String? _serialNumber;
   String? get serialNumber => _serialNumber;
-  String? _lastPid;
-  String? _lastSn;
   String? _lastHandshakeMode;
   String? get lastHandshakeMode => _lastHandshakeMode;
   String? _lastOpenPortPath;
@@ -44,6 +41,22 @@ class CutterBluetoothService {
 
   String? _preferredHandshakeAlgo;
   String? _preferredHandshakeMode;
+  final Map<String, String> _cachedHandshakeBySerial = {};
+
+  String _serialCacheKey(String serial) => serial.trim().toUpperCase();
+
+  String? _getCachedHandshakeFromMemory(String? serial) {
+    final value = (serial ?? '').trim();
+    if (value.isEmpty) return null;
+    return _cachedHandshakeBySerial[_serialCacheKey(value)];
+  }
+
+  void _rememberCachedHandshake(String serial, String algorithm) {
+    final value = serial.trim();
+    if (value.isEmpty) return;
+    _cachedHandshakeBySerial[_serialCacheKey(value)] =
+        _normalizeHandshakeAlgorithm(algorithm);
+  }
 
   void setSerialNumber(String? serial) {
     final normalized = _normalizeSerialCandidate(serial);
@@ -71,7 +84,7 @@ class CutterBluetoothService {
     if (text.isEmpty) return null;
 
     final upper = text.toUpperCase();
-    const markers = ['CBM=', 'SN=', 'SERIAL=', 'STR=10,', 'RSTR=10,'];
+    const markers = ['CBM=', 'SN=', 'SERIAL='];
     for (final marker in markers) {
       final idx = upper.lastIndexOf(marker);
       if (idx != -1) {
@@ -132,8 +145,12 @@ class CutterBluetoothService {
     if (upper.startsWith('DQ') ||
         upper.startsWith('DX') ||
         upper.startsWith('LH')) {
-      await cacheSuccessfulHandshake('HANDSHAKE_NEW', false,
-          mode: 'heuristic', persist: false);
+      await cacheSuccessfulHandshake(
+        'HANDSHAKE_NEW',
+        false,
+        mode: 'heuristic',
+        persist: false,
+      );
     }
     // Do not call add-device here; registration should happen only after
     // a proven successful handshake to avoid duplicate/incorrect backend rows.
@@ -176,31 +193,29 @@ class CutterBluetoothService {
   String? get preferredHandshakeAlgorithm => _preferredHandshakeAlgo;
 
   String _normalizeHandshakeAlgorithm(String? raw) {
-    final value = (raw ?? '').trim().toUpperCase();
-    if (value.isEmpty) return 'HANDSHAKE_NEW';
+    return HandshakeResponseResolver.normalizeOrDefault(raw);
+  }
 
-    if (value == 'SUNSHINE' || value == 'AUTO' || value == 'AUTO_TRY') {
-      return 'SUNSHINE';
+  String? _resolveBackendMachineType(
+    SharedPreferences prefs,
+    String serial,
+  ) {
+    final upper = serial.trim().toUpperCase();
+    if (upper.isEmpty) return null;
+
+    if (upper.startsWith('DQ')) return 'crust';
+    if (upper.startsWith('LH')) return 'hebeshi';
+    if (upper.startsWith('DX') || upper.startsWith('DH')) return 'AtB';
+    if (upper.startsWith('SS') ||
+        upper.startsWith('CUTTER') ||
+        upper.startsWith('SUNSHINE')) {
+      return 'sunshine';
     }
 
-    if (value == 'ROCKSPACE' ||
-        value == 'ROCKSPACE_SN' ||
-        value == 'ROCKSPACE_STR' ||
-        value == 'ROCKSPACE HANDSHAKE SEQUENCE') {
-      return 'ROCKSPACE_STR';
-    }
-
-    if (value == 'OLD_V1' ||
-        value == 'GETOLDPASSWORD' ||
-        value == 'OLDPASSWORD') {
-      return 'OLD_V1';
-    }
-
-    if (value == 'OLD_V3' || value == 'PASSWORD' || value == 'GETPASSWORD') {
-      return 'OLD_V3';
-    }
-
-    return 'HANDSHAKE_NEW';
+    final stored = (prefs.getString('machine_type_$upper') ?? '').trim();
+    if (stored.isEmpty || stored == 'unknown') return null;
+    if (stored == 'ss_like') return 'sunshine';
+    return stored;
   }
 
   void setSuppressAutoHandshake(bool suppress) {
@@ -209,7 +224,6 @@ class CutterBluetoothService {
 
   // Cache for successful handshake algorithm
   String? _successfulAgentType;
-  bool? _successfulIsNewVersion;
 
   Future<void> cacheSuccessfulHandshake(
     String agentType,
@@ -219,15 +233,19 @@ class CutterBluetoothService {
   }) async {
     final normalizedAgentType = _normalizeHandshakeAlgorithm(agentType);
     _successfulAgentType = normalizedAgentType;
-    _successfulIsNewVersion = isNewVersion;
     _lastHandshakeMode = mode;
+    if (_serialNumber != null && _serialNumber!.isNotEmpty) {
+      _rememberCachedHandshake(_serialNumber!, normalizedAgentType);
+    }
 
     if (!persist) return;
 
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(
-          'last_successful_handshake_algo', normalizedAgentType);
+        'last_successful_handshake_algo',
+        normalizedAgentType,
+      );
       await prefs.setString('last_successful_handshake_mode', mode);
       await prefs.setBool('auto_connect_enabled', true);
       if (_lastOpenPortPath != null && _lastOpenPortPath!.isNotEmpty) {
@@ -235,15 +253,24 @@ class CutterBluetoothService {
       }
 
       if (_serialNumber != null && _serialNumber!.isNotEmpty) {
+        final machineType = _resolveBackendMachineType(prefs, _serialNumber!);
         await prefs.setString(
-            'handshake_algo_$_serialNumber', normalizedAgentType);
+          'handshake_algo_$_serialNumber',
+          normalizedAgentType,
+        );
         await prefs.setString('handshake_mode_$_serialNumber', mode);
         await prefs.setString('last_connected_serial', _serialNumber!);
         if (_lastOpenPortPath != null && _lastOpenPortPath!.isNotEmpty) {
           await prefs.setString(
-              'serial_port_$_serialNumber', _lastOpenPortPath!);
+            'serial_port_$_serialNumber',
+            _lastOpenPortPath!,
+          );
         }
-        ApiService().addDevice(_serialNumber!, normalizedAgentType);
+        ApiService().addDevice(
+          _serialNumber!,
+          normalizedAgentType,
+          machineType: machineType,
+        );
       }
     } catch (_) {}
   }
@@ -278,11 +305,18 @@ class CutterBluetoothService {
   }
 
   Future<String?> getCachedHandshake(String serial) async {
+    final memoryValue = _getCachedHandshakeFromMemory(serial);
+    if (memoryValue != null && memoryValue.isNotEmpty) {
+      return memoryValue;
+    }
+
     try {
       final prefs = await SharedPreferences.getInstance();
       final value = prefs.getString('handshake_algo_$serial');
       if (value == null || value.trim().isEmpty) return null;
-      return _normalizeHandshakeAlgorithm(value);
+      final normalized = _normalizeHandshakeAlgorithm(value);
+      _rememberCachedHandshake(serial, normalized);
+      return normalized;
     } catch (_) {
       return null;
     }
@@ -383,10 +417,7 @@ class CutterBluetoothService {
     _connectedDevice = null;
     _serialNumber = null;
     _successfulAgentType = null;
-    _successfulIsNewVersion = null;
     _lastHandshakeMode = null;
-    _lastPid = null;
-    _lastSn = null;
     _autoHandshakeBuffer = "";
     _serialUpdateController.add(null);
   }
@@ -464,7 +495,10 @@ class CutterBluetoothService {
         if (challenge != null && !handshakeSent) {
           handshakeSent = true;
           challengeTimer?.cancel();
-          final password = EncryptionUtil.getDQHandshake(challenge);
+          final password =
+              HandshakeResponseResolver.resolvePrintHandshakeResponse(
+            challenge,
+          );
           write("BD:12,$password;");
           ackTimer?.cancel();
           ackTimer = Timer(ackTimeout, () {
@@ -539,29 +573,21 @@ class CutterBluetoothService {
       _autoHandshakeBuffer = _autoHandshakeBuffer.substring(endIndex + 1);
 
       message = message.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), '');
-
-      final pid = _extractValue(message, "PID=");
-      if (pid != null && pid.isNotEmpty) {
-        _lastPid = pid;
-      }
       final cbm = _extractValue(message, "CBM=");
       if (cbm != null && cbm.isNotEmpty) {
-        _lastSn = cbm;
         if (_serialNumber == null ||
             _serialNumber!.isEmpty ||
             _serialNumber != cbm) {
           setSerialNumber(cbm);
         }
       }
-      final rpid = _extractValue(message, "RPID=");
-      if (rpid != null && rpid.isNotEmpty) {
-        _lastPid = rpid;
-      }
 
       if (!message.contains("=")) {
         final bare = message.replaceAll(";", "").trim();
-        if (RegExp(r'^(SS|DQ|DX|LH)[A-Za-z0-9\-]{4,}$', caseSensitive: false)
-            .hasMatch(bare)) {
+        if (RegExp(
+          r'^(SS|DQ|DX|LH)[A-Za-z0-9\-]{4,}$',
+          caseSensitive: false,
+        ).hasMatch(bare)) {
           if (_serialNumber == null || _serialNumber!.isEmpty) {
             setSerialNumber(bare);
           }
@@ -587,27 +613,22 @@ class CutterBluetoothService {
       String numStr = data.substring(start, end).trim();
       int challenge = int.parse(numStr);
 
-      int response;
       String? cachedAlgo = _successfulAgentType;
-
-      if (cachedAlgo == null && _serialNumber != null) {
-        cachedAlgo = await getCachedHandshake(_serialNumber!);
+      if ((cachedAlgo == null || cachedAlgo.isEmpty) && _serialNumber != null) {
+        cachedAlgo = _getCachedHandshakeFromMemory(_serialNumber);
       }
 
       final normalizedAlgo = _normalizeHandshakeAlgorithm(cachedAlgo);
-      if (normalizedAlgo == "ROCKSPACE_STR") {
-        // Rockspace uses STR handshake sequence; skip RCMD auto-response.
-        return;
-      } else if (normalizedAlgo == "OLD_V1") {
-        response = EncryptionUtil.getHandshakeOldV1(challenge);
-      } else if (normalizedAlgo == "OLD_V3") {
-        response = EncryptionUtil.getHandshakeOldV3(challenge);
-      } else {
-        response = EncryptionUtil.getHandshakeNew(challenge);
-      }
+      final response = HandshakeResponseResolver.resolveChallengeResponse(
+        algorithm: normalizedAlgo,
+        challenge: challenge,
+      );
 
-      if (_successfulAgentType == null) {
-        cacheSuccessfulHandshake(normalizedAlgo, true, mode: "default");
+      if (_successfulAgentType == null || _successfulAgentType!.isEmpty) {
+        _successfulAgentType = normalizedAlgo;
+      }
+      if (_serialNumber != null && _serialNumber!.isNotEmpty) {
+        _rememberCachedHandshake(_serialNumber!, normalizedAlgo);
       }
 
       write("BD:12,$response;");

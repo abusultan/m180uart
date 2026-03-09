@@ -18,11 +18,7 @@ class _ScanScreenState extends State<ScanScreen> {
   static const String _algoPrefKey = 'manual_handshake_algorithm_ui';
 
   final List<Map<String, String>> _handshakeAlgorithms = const [
-    {"label": "Sunshine (Try 3 methods)", "value": "SUNSHINE"},
-    {
-      "label": "Rockspace Machine Handshake",
-      "value": "ROCKSPACE_STR",
-    },
+    {"label": "Sunshine UART (Try 3 methods)", "value": "SUNSHINE"},
     {"label": "PassWord2 (Primary)", "value": "HANDSHAKE_NEW"},
     {"label": "OldPassWord", "value": "OLD_V1"},
     {"label": "PassWord", "value": "OLD_V3"},

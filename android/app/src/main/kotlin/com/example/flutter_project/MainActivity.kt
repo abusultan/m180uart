@@ -16,6 +16,8 @@ import android.net.Uri
 import android.content.IntentFilter
 import android.content.Context
 import android.content.BroadcastReceiver
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
 import androidx.core.content.FileProvider
 import com.caverock.androidsvg.SVG
 import com.example.flutter_project.serial.SerialPortManager
@@ -164,6 +166,102 @@ class MainActivity : FlutterActivity() {
         }
         startActivity(intent)
         return true
+    }
+
+    private fun getInstalledPackageInfoSafe(packageName: String): PackageInfo? {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.getPackageInfo(
+                    packageName,
+                    PackageManager.PackageInfoFlags.of(0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getPackageInfo(packageName, 0)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun getArchivePackageInfoSafe(path: String): PackageInfo? {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.getPackageArchiveInfo(
+                    path,
+                    PackageManager.PackageInfoFlags.of(0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getPackageArchiveInfo(path, 0)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun getVersionCode(info: PackageInfo): Long {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            @Suppress("DEPRECATION")
+            info.versionCode.toLong()
+        }
+    }
+
+    private fun isApkNewerThanInstalledInternal(path: String): Boolean {
+        val apkFile = File(path)
+        if (!apkFile.exists()) {
+            throw IllegalArgumentException("APK not found: $path")
+        }
+
+        val archiveInfo = getArchivePackageInfoSafe(path) ?: return false
+        val archivePackageName = archiveInfo.packageName ?: return false
+        if (archivePackageName != packageName) {
+            return false
+        }
+
+        val installedInfo = getInstalledPackageInfoSafe(packageName) ?: return true
+        val incomingVersionCode = getVersionCode(archiveInfo)
+        val installedVersionCode = getVersionCode(installedInfo)
+        return incomingVersionCode > installedVersionCode
+    }
+
+    private fun runRootCommand(command: String): Boolean {
+        val candidates = arrayOf("/system/bin/su", "/system/xbin/su", "/su/bin/su", "su")
+        for (su in candidates) {
+            try {
+                val process = Runtime.getRuntime().exec(su)
+                process.outputStream.use { out ->
+                    out.write(("sh -c '$command'\nexit\n").toByteArray())
+                    out.flush()
+                }
+                val code = process.waitFor()
+                if (code == 0) return true
+            } catch (_: Exception) {
+                // Try next su candidate.
+            }
+        }
+        return false
+    }
+
+    private fun installApkSilentlyInternal(path: String): Boolean {
+        val apkFile = File(path)
+        if (!apkFile.exists()) {
+            throw IllegalArgumentException("APK not found: $path")
+        }
+
+        val escapedPath = path.replace("\"", "\\\"")
+        val commands = arrayOf(
+            "pm install -r -d -g \"$escapedPath\"",
+            "cmd package install -r -d -g \"$escapedPath\""
+        )
+        for (command in commands) {
+            if (runRootCommand(command)) {
+                return true
+            }
+        }
+        return false
     }
 
     private fun setupWifiAutoReturn(timeoutSeconds: Int) {
@@ -377,6 +475,30 @@ class MainActivity : FlutterActivity() {
                             result.success(installApkInternal(pathArg))
                         } catch (e: Exception) {
                             result.error("install_apk_failed", e.message, null)
+                        }
+                    }
+                    "installApkSilently" -> {
+                        val pathArg = call.argument<String>("path")
+                        if (pathArg.isNullOrBlank()) {
+                            result.error("install_apk_silent_failed", "path is empty", null)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            result.success(installApkSilentlyInternal(pathArg))
+                        } catch (e: Exception) {
+                            result.error("install_apk_silent_failed", e.message, null)
+                        }
+                    }
+                    "isApkNewerThanInstalled" -> {
+                        val pathArg = call.argument<String>("path")
+                        if (pathArg.isNullOrBlank()) {
+                            result.error("apk_version_check_failed", "path is empty", null)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            result.success(isApkNewerThanInstalledInternal(pathArg))
+                        } catch (e: Exception) {
+                            result.error("apk_version_check_failed", e.message, null)
                         }
                     }
                     else -> result.notImplemented()

@@ -15,7 +15,6 @@ class GoodDetailScreen extends StatefulWidget {
 class _GoodDetailScreenState extends State<GoodDetailScreen> {
   Good? _good;
   bool _isLoading = true;
-  int _quantity = 1;
 
   String _safeUrl(String url) => ApiService().normalizeUrl(url);
 
@@ -44,65 +43,6 @@ class _GoodDetailScreenState extends State<GoodDetailScreen> {
         setState(() {
           _isLoading = false;
         });
-      }
-    }
-  }
-
-  Future<void> _showAddToCartDialog() async {
-    if (_good == null) return;
-
-    setState(() => _isLoading = true);
-    final response = await ApiService().addToCart(_good!.id, _quantity);
-    setState(() => _isLoading = false);
-
-    if (mounted) {
-      if (response != null) {
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            backgroundColor: const Color(0xFF1E1E1E),
-            title: Text(
-              AppStrings.of(context, 'added_to_cart'),
-              style: const TextStyle(color: Colors.white),
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _good!.nameAr.isNotEmpty ? _good!.nameAr : _good!.nameEn,
-                  style: const TextStyle(color: Colors.white70),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '${AppStrings.of(context, 'quantity')}: $_quantity',
-                  style: const TextStyle(color: Color(0xFF00FF88)),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.pop(context); // إغلاق الحوار
-                  Navigator.pop(
-                    context,
-                    true,
-                  ); // العودة للشاشة السابقة مع إشارة نجاح
-                },
-                child: Text(
-                  AppStrings.of(context, 'ok'),
-                  style: const TextStyle(color: Color(0xFF00FF88)),
-                ),
-              ),
-            ],
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(AppStrings.of(context, 'add_to_cart_failed')),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
       }
     }
   }
@@ -350,98 +290,6 @@ class _GoodDetailScreenState extends State<GoodDetailScreen> {
                               const SizedBox(height: 24),
                             ],
 
-                            // اختيار الكمية
-                            Text(
-                              AppStrings.of(context, 'quantity'),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF1E1E1E),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  IconButton(
-                                    onPressed: _quantity > 1
-                                        ? () {
-                                            setState(() {
-                                              _quantity--;
-                                            });
-                                          }
-                                        : null,
-                                    icon: const Icon(Icons.remove_circle),
-                                    color: _quantity > 1
-                                        ? const Color(0xFF00FF88)
-                                        : Colors.grey,
-                                    iconSize: 32,
-                                  ),
-                                  const SizedBox(width: 24),
-                                  Text(
-                                    '$_quantity',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 24,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 24),
-                                  IconButton(
-                                    onPressed: _quantity < _good!.stock
-                                        ? () {
-                                            setState(() {
-                                              _quantity++;
-                                            });
-                                          }
-                                        : null,
-                                    icon: const Icon(Icons.add_circle),
-                                    color: _quantity < _good!.stock
-                                        ? const Color(0xFF00FF88)
-                                        : Colors.grey,
-                                    iconSize: 32,
-                                  ),
-                                ],
-                              ),
-                            ),
-
-                            const SizedBox(height: 24),
-
-                            // زر الإضافة للسلة
-                            SizedBox(
-                              width: double.infinity,
-                              height: 56,
-                              child: ElevatedButton.icon(
-                                onPressed: _good!.stock > 0
-                                    ? _showAddToCartDialog
-                                    : null,
-                                icon: const Icon(Icons.shopping_cart),
-                                label: Text(
-                                  _good!.stock > 0
-                                      ? AppStrings.of(context, 'add_to_cart')
-                                      : AppStrings.of(context, 'out_of_stock'),
-                                  style: const TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: _good!.stock > 0
-                                      ? const Color(0xFF00FF88)
-                                      : const Color(0xFF2A2A2A),
-                                  foregroundColor: Colors.black,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                ),
-                              ),
-                            ),
                           ],
                         ),
                       ),

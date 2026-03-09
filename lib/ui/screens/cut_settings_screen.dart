@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter/services.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/cut_settings_service.dart';
 import '../../services/bluetooth_service.dart';
@@ -66,20 +67,16 @@ class CutSettingsScreen extends StatefulWidget {
 class _CutSettingsScreenState extends State<CutSettingsScreen> {
   static const String _handshakeAlgoKey = 'manual_handshake_algorithm_ui';
   static const String _forceLandscapeKey = 'force_landscape';
-  static const String _apkUpdateUrlKey = 'apk_update_url';
   static const String _testPltUrlKey = 'test_plt_url';
-  static const String _defaultUpdateUrl = 'http://anti-crash.com/update.apk';
+  static const String _defaultUpdateUrl =
+      'https://anti-crash.com/update.apk';
   static const String _defaultTestPltUrl =
       'https://cutter.vr186.com/file/54f03c97bff3ffd073668.plt';
   static const String _sensitivePasswordKey = 'sensitive_settings_password';
   static const String _defaultSensitivePassword = '2580';
 
   static const List<Map<String, String>> _handshakeAlgorithms = [
-    {"label": "Sunshine (Try 3 methods)", "value": "SUNSHINE"},
-    {
-      "label": "Rockspace Machine Handshake",
-      "value": "ROCKSPACE_STR",
-    },
+    {"label": "Sunshine UART (Try 3 methods)", "value": "SUNSHINE"},
     {"label": "PassWord2 (Primary)", "value": "HANDSHAKE_NEW"},
     {"label": "OldPassWord", "value": "OLD_V1"},
     {"label": "PassWord", "value": "OLD_V3"},
@@ -97,11 +94,11 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
   double _angleValue = CutSettingsService.defaultAngleValue;
   bool _forceLandscape = false;
   String _manualHandshakeAlgorithm = MachineHandshake.algoSunshine;
-  final TextEditingController _apkUrlController = TextEditingController();
   final TextEditingController _testPltUrlController = TextEditingController();
   bool _isUpdating = false;
   bool _isSendingTestPlt = false;
   double _downloadProgress = 0;
+  String _appVersionLabel = '';
 
   @override
   void initState() {
@@ -111,7 +108,6 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
 
   @override
   void dispose() {
-    _apkUrlController.dispose();
     _testPltUrlController.dispose();
     super.dispose();
   }
@@ -122,26 +118,20 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
     final autoFeed = await _settings.getAutoFeed();
     final angleEnabled = await _settings.getAngleEnabled();
     final angleValue = await _settings.getAngleValue();
+    final packageInfo = await PackageInfo.fromPlatform();
     final prefs = await SharedPreferences.getInstance();
     final savedAlgo = prefs.getString(_handshakeAlgoKey);
     final forceLandscape = prefs.getBool(_forceLandscapeKey) ?? false;
-    final savedUpdateUrl = (prefs.getString(_apkUpdateUrlKey) ?? '').trim();
     final savedTestPltUrl = (prefs.getString(_testPltUrlKey) ?? '').trim();
     final effectiveAlgo =
         _handshakeAlgorithms.any((a) => a['value'] == savedAlgo)
             ? savedAlgo
             : null;
-    final effectiveUpdateUrl =
-        savedUpdateUrl.isEmpty ? _defaultUpdateUrl : savedUpdateUrl;
     final effectiveTestPltUrl =
         savedTestPltUrl.isEmpty ? _defaultTestPltUrl : savedTestPltUrl;
-    if (savedUpdateUrl.isEmpty) {
-      await prefs.setString(_apkUpdateUrlKey, _defaultUpdateUrl);
-    }
     if (savedTestPltUrl.isEmpty) {
       await prefs.setString(_testPltUrlKey, _defaultTestPltUrl);
     }
-    _apkUrlController.text = effectiveUpdateUrl;
     _testPltUrlController.text = effectiveTestPltUrl;
     if (!mounted) return;
     setState(() {
@@ -150,6 +140,8 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
       _autoFeed = autoFeed;
       _angleEnabled = angleEnabled;
       _angleValue = angleValue;
+      _appVersionLabel =
+          'Installed version: ${packageInfo.version} (${packageInfo.buildNumber})';
       _forceLandscape = forceLandscape;
       if (effectiveAlgo != null) {
         _manualHandshakeAlgorithm = effectiveAlgo;
@@ -257,21 +249,158 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
     }
   }
 
-  Future<void> _saveUpdateUrl() async {
-    final typedUrl = _apkUrlController.text.trim();
-    final url = typedUrl.isEmpty ? _defaultUpdateUrl : typedUrl;
-    if (typedUrl.isEmpty) {
-      _apkUrlController.text = url;
+  Future<String> _resolveUpdateUrl() async {
+    return _defaultUpdateUrl;
+  }
+
+  int? _parsePositiveInt(dynamic value) {
+    final raw = value?.toString().trim() ?? '';
+    if (raw.isEmpty) return null;
+    final parsed = int.tryParse(raw);
+    if (parsed == null || parsed < 0) return null;
+    return parsed;
+  }
+
+  Map<String, dynamic>? _asStringMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) {
+      return value.map((key, val) => MapEntry(key.toString(), val));
     }
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_apkUpdateUrlKey, url);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Update link saved.'),
-        backgroundColor: Color(0xFF00FF88),
-      ),
+    return null;
+  }
+
+  int? _extractVersionCodeFromHeaders(Headers headers) {
+    const candidates = <String>[
+      'x-version-code',
+      'x-app-version-code',
+      'x-build-number',
+      'x-version',
+      'version-code',
+      'build-number',
+    ];
+
+    for (final key in candidates) {
+      final values = headers.map[key];
+      if (values == null || values.isEmpty) continue;
+      final parsed = _parsePositiveInt(values.first);
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  int? _extractVersionCodeFromPayload(Map<String, dynamic> payload) {
+    const keys = <String>[
+      'versionCode',
+      'version_code',
+      'buildNumber',
+      'build_number',
+      'version',
+    ];
+
+    for (final key in keys) {
+      final parsed = _parsePositiveInt(payload[key]);
+      if (parsed != null) return parsed;
+    }
+
+    final nestedCandidates = <dynamic>[
+      payload['data'],
+      payload['update'],
+      payload['app'],
+    ];
+    for (final nested in nestedCandidates) {
+      final nestedMap = _asStringMap(nested);
+      if (nestedMap == null) continue;
+      for (final key in keys) {
+        final parsed = _parsePositiveInt(nestedMap[key]);
+        if (parsed != null) return parsed;
+      }
+    }
+
+    return null;
+  }
+
+  List<String> _buildUpdateMetadataUrls(String apkUrl) {
+    final apkUri = Uri.tryParse(apkUrl);
+    if (apkUri == null || apkUri.scheme.isEmpty || apkUri.host.isEmpty) {
+      return const [];
+    }
+    if (apkUri.pathSegments.isEmpty) return const [];
+
+    final baseSegments = apkUri.pathSegments.length > 1
+        ? apkUri.pathSegments.sublist(0, apkUri.pathSegments.length - 1)
+        : <String>[];
+    const filenames = <String>[
+      'update.json',
+      'version.json',
+      'app-version.json',
+    ];
+
+    final urls = <String>[];
+    for (final filename in filenames) {
+      final uri = apkUri.replace(
+        pathSegments: [...baseSegments, filename],
+        queryParameters: null,
+        query: null,
+        fragment: '',
+      );
+      final normalized = uri.toString();
+      if (!urls.contains(normalized)) {
+        urls.add(normalized);
+      }
+    }
+    return urls;
+  }
+
+  Future<int?> _getInstalledBuildNumber() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      return _parsePositiveInt(info.buildNumber);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<int?> _fetchServerBuildNumber(String apkUrl) async {
+    final dio = Dio();
+    final requestOptions = Options(
+      followRedirects: true,
+      sendTimeout: const Duration(seconds: 20),
+      receiveTimeout: const Duration(seconds: 20),
+      validateStatus: (code) => code != null && code >= 200 && code < 400,
     );
+
+    try {
+      final head = await dio.head(apkUrl, options: requestOptions);
+      final fromHead = _extractVersionCodeFromHeaders(head.headers);
+      if (fromHead != null) return fromHead;
+    } catch (_) {
+      // Ignore and try metadata URLs.
+    }
+
+    final metadataUrls = _buildUpdateMetadataUrls(apkUrl);
+    for (final metadataUrl in metadataUrls) {
+      try {
+        final response = await dio.get(
+          metadataUrl,
+          options: Options(
+            followRedirects: true,
+            sendTimeout: const Duration(seconds: 20),
+            receiveTimeout: const Duration(seconds: 20),
+            headers: const {'Accept': 'application/json'},
+            validateStatus: (code) => code != null && code >= 200 && code < 400,
+          ),
+        );
+
+        final payload = _asStringMap(response.data);
+        if (payload == null) continue;
+        final fromPayload = _extractVersionCodeFromPayload(payload);
+        if (fromPayload != null) return fromPayload;
+      } catch (_) {
+        // Try next metadata endpoint.
+      }
+    }
+
+    return null;
   }
 
   Future<void> _saveTestPltUrl() async {
@@ -320,10 +449,8 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
 
     handshake.startHandshake();
     try {
-      final timeoutSeconds =
-          preferred == MachineHandshake.algoRockspace ? 25 : 20;
       return await completer.future.timeout(
-        Duration(seconds: timeoutSeconds),
+        const Duration(seconds: 20),
         onTimeout: () => false,
       );
     } finally {
@@ -464,28 +591,10 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
     }
   }
 
-  Future<void> _downloadAndInstallUpdate() async {
+  Future<void> _checkForUpdateAndInstall() async {
     if (_isUpdating) return;
 
-    final typedUrl = _apkUrlController.text.trim();
-    final url = typedUrl.isEmpty ? _defaultUpdateUrl : typedUrl;
-    if (typedUrl.isEmpty) {
-      _apkUrlController.text = url;
-    }
-    if (!(url.startsWith('http://') || url.startsWith('https://'))) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter a valid APK link.'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_apkUpdateUrlKey, url);
-
+    final url = await _resolveUpdateUrl();
     if (!mounted) return;
     setState(() {
       _isUpdating = true;
@@ -493,6 +602,44 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
     });
 
     try {
+      final installedBuild = await _getInstalledBuildNumber();
+      if (installedBuild == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to read current app version.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      final serverBuild = await _fetchServerBuildNumber(url);
+      if (serverBuild == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Cannot verify update version from server. Add update.json or X-Version-Code header.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      if (serverBuild <= installedBuild) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text('No update found. You already have the latest version.'),
+            backgroundColor: Color(0xFF00FF88),
+          ),
+        );
+        return;
+      }
+
       final tmpDir = await getTemporaryDirectory();
       final apkPath =
           '${tmpDir.path}/update_${DateTime.now().millisecondsSinceEpoch}.apk';
@@ -513,16 +660,13 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
         },
       );
 
-      final canInstall = await _appSettings.canInstallPackages();
-      if (!canInstall) {
-        final opened = await _appSettings.openInstallUnknownSourcesSettings();
+      final isNewer = await _appSettings.isApkNewerThanInstalled(apkPath);
+      if (!isNewer) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              opened
-                  ? 'Enable installation from unknown sources, then press Update again.'
-                  : 'Cannot open unknown sources settings.',
+              'Server version is $serverBuild but downloaded APK is not newer.',
             ),
             backgroundColor: Colors.orange,
           ),
@@ -530,16 +674,17 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
         return;
       }
 
-      final started = await _appSettings.installApk(apkPath);
+      final installedSilently = await _appSettings.installApkSilently(apkPath);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            started
-                ? 'Installer opened. Confirm installation on the device.'
-                : 'Failed to open APK installer.',
+            installedSilently
+                ? 'Update installed automatically.'
+                : 'Automatic install failed. Root/device-owner permission is required.',
           ),
-          backgroundColor: started ? const Color(0xFF00FF88) : Colors.red,
+          backgroundColor:
+              installedSilently ? const Color(0xFF00FF88) : Colors.red,
         ),
       );
     } catch (e) {
@@ -1026,41 +1171,29 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
                             ),
                           ),
                           const SizedBox(height: 10),
-                          TextField(
-                            controller: _apkUrlController,
-                            style: const TextStyle(color: Colors.white),
-                            decoration: const InputDecoration(
-                              labelText: 'APK link',
-                              labelStyle: TextStyle(color: Colors.grey),
-                              hintText: 'https://your-server.com/app-debug.apk',
-                              hintStyle: TextStyle(color: Colors.grey),
+                          if (_appVersionLabel.isNotEmpty) ...[
+                            Text(
+                              _appVersionLabel,
+                              style: const TextStyle(
+                                color: Colors.grey,
+                                fontSize: 12,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  onPressed: _saveUpdateUrl,
-                                  icon: const Icon(Icons.save),
-                                  label: const Text('Save Link'),
-                                ),
+                            const SizedBox(height: 10),
+                          ],
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed: _isUpdating
+                                  ? null
+                                  : _checkForUpdateAndInstall,
+                              icon: const Icon(Icons.system_update_alt),
+                              label: Text(
+                                _isUpdating
+                                    ? 'Checking...'
+                                    : 'Check for Update',
                               ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: ElevatedButton.icon(
-                                  onPressed: _isUpdating
-                                      ? null
-                                      : _downloadAndInstallUpdate,
-                                  icon: const Icon(Icons.system_update_alt),
-                                  label: Text(
-                                    _isUpdating
-                                        ? 'Downloading...'
-                                        : 'Download & Install',
-                                  ),
-                                ),
-                              ),
-                            ],
+                            ),
                           ),
                           if (_isUpdating) ...[
                             const SizedBox(height: 10),

@@ -44,4 +44,24 @@ class AppSettingsService {
       return false;
     }
   }
+
+  Future<bool> installApkSilently(String apkPath) async {
+    try {
+      final result = await _channel
+          .invokeMethod<bool>('installApkSilently', {'path': apkPath});
+      return result ?? false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  Future<bool> isApkNewerThanInstalled(String apkPath) async {
+    try {
+      final result = await _channel
+          .invokeMethod<bool>('isApkNewerThanInstalled', {'path': apkPath});
+      return result ?? false;
+    } on PlatformException {
+      return false;
+    }
+  }
 }

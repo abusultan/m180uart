@@ -6,7 +6,6 @@ import '../../services/bluetooth_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dashboard_screen.dart';
 import 'profile_screen.dart';
-import 'cart_screen.dart';
 
 class _FirstSerialSetupChoice {
   final String machineType;
@@ -15,6 +14,18 @@ class _FirstSerialSetupChoice {
   const _FirstSerialSetupChoice({
     required this.machineType,
     required this.handshakeAlgorithm,
+  });
+}
+
+class _CachedAutoConnectRoute {
+  final String serial;
+  final String port;
+  final String algorithm;
+
+  const _CachedAutoConnectRoute({
+    required this.serial,
+    required this.port,
+    required this.algorithm,
   });
 }
 
@@ -31,6 +42,13 @@ class _MainScreenState extends State<MainScreen> {
   bool _serialSetupDialogOpen = false;
   Timer? _autoConnectRetryTimer;
   static const Duration _autoConnectRetryDelay = Duration(seconds: 12);
+  static const Duration _fastPathHandshakeTimeout = Duration(seconds: 8);
+  static const Duration _directConcreteHandshakeTimeout = Duration(seconds: 8);
+  static const Duration _directSunshineHandshakeTimeout = Duration(seconds: 12);
+  static const Duration _scanHandshakeTimeoutWithImmediateRx =
+      Duration(seconds: 12);
+  static const Duration _scanHandshakeTimeoutWithoutImmediateRx =
+      Duration(seconds: 16);
   StreamSubscription<String?>? _serialSub;
 
   @override
@@ -84,6 +102,31 @@ class _MainScreenState extends State<MainScreen> {
         (prefs.getString('manual_handshake_algorithm_ui') ?? '').trim();
     final normalized = MachineHandshake.normalizeAlgorithm(manualDefault);
     return normalized ?? MachineHandshake.algoSunshine;
+  }
+
+  _CachedAutoConnectRoute? _readCachedAutoConnectRoute(
+    SharedPreferences prefs,
+  ) {
+    final serial = (prefs.getString('last_connected_serial') ?? '').trim();
+    if (serial.isEmpty) return null;
+
+    final algorithm = _readCachedAlgorithmForSerial(prefs, serial);
+    if (algorithm == null ||
+        algorithm.isEmpty ||
+        algorithm == MachineHandshake.algoSunshine) {
+      return null;
+    }
+
+    final serialPort = (prefs.getString('serial_port_$serial') ?? '').trim();
+    final lastPort = (prefs.getString('last_serial_port_path') ?? '').trim();
+    final port = serialPort.isNotEmpty ? serialPort : lastPort;
+    if (port.isEmpty) return null;
+
+    return _CachedAutoConnectRoute(
+      serial: serial,
+      port: port,
+      algorithm: algorithm,
+    );
   }
 
   String _serialSetupDoneKey(String serial) =>
@@ -194,11 +237,11 @@ class _MainScreenState extends State<MainScreen> {
                       ),
                       DropdownMenuItem(
                         value: 'dq_like',
-                        child: Text('DQ / DX / LH'),
+                        child: Text('DQ / DX / LH UART'),
                       ),
                       DropdownMenuItem(
                         value: 'ss_like',
-                        child: Text('SS / غيرها'),
+                        child: Text('SS / Sunshine UART'),
                       ),
                     ],
                     onChanged: (value) {
@@ -217,11 +260,7 @@ class _MainScreenState extends State<MainScreen> {
                     items: const [
                       DropdownMenuItem(
                         value: 'SUNSHINE',
-                        child: Text('Sunshine (تجربة 3 طرق)'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'ROCKSPACE_STR',
-                        child: Text('Rockspace Machine Handshake'),
+                        child: Text('Sunshine UART (تجربة 3 طرق)'),
                       ),
                       DropdownMenuItem(
                         value: 'HANDSHAKE_NEW',
@@ -243,7 +282,7 @@ class _MainScreenState extends State<MainScreen> {
                   ),
                   const SizedBox(height: 10),
                   const Text(
-                    'إذا ما بتعرف النوع، خليه Sunshine للتجربة التلقائية.',
+                    'إذا ما بتعرف النوع، خليه Sunshine UART للتجربة التلقائية.',
                     style: TextStyle(color: Colors.grey, fontSize: 12),
                   ),
                 ],
@@ -259,7 +298,7 @@ class _MainScreenState extends State<MainScreen> {
                     );
                   },
                   child: const Text(
-                    'جرب Sunshine',
+                    'جرب Sunshine UART',
                     style: TextStyle(color: Colors.grey),
                   ),
                 ),
@@ -312,7 +351,6 @@ class _MainScreenState extends State<MainScreen> {
 
   List<Widget> _getPages() => [
         const DashboardScreen(),
-        const CartScreen(),
         const ProfileScreen(),
       ];
 
@@ -341,16 +379,10 @@ class _MainScreenState extends State<MainScreen> {
       result.add(saved);
     }
 
-    // Prefer ttyS0 first to avoid stalls on boxes where ttyS1 is present
-    // but inaccessible or not wired to the cutter.
+    // Mirror the native serial default on most boxes: try ttyS1 first, then
+    // fall back to ttyS0 when nothing is cached yet.
+    result.add('/dev/ttyS1');
     result.add('/dev/ttyS0');
-    if (saved == '/dev/ttyS1' || lastSerial.isNotEmpty) {
-      final serialPort =
-          (prefs.getString('serial_port_$lastSerial') ?? '').trim();
-      if (serialPort == '/dev/ttyS1' || saved == '/dev/ttyS1') {
-        result.add('/dev/ttyS1');
-      }
-    }
 
     // Only include extended ports when they were explicitly saved before.
     if (saved == '/dev/ttyS2' || saved == '/dev/ttyS3') {
@@ -369,22 +401,21 @@ class _MainScreenState extends State<MainScreen> {
     String? setupSelectedAlgorithm,
   }) {
     final result = <String>[];
-    // Sunshine stays first priority, then known/cached choices, then Rockspace fallback.
-    result.add(MachineHandshake.algoSunshine);
 
-    void addNormalized(String? value) {
+    void addConcrete(String? value) {
       final normalized = MachineHandshake.normalizeAlgorithm(value);
-      if (normalized != null && normalized.isNotEmpty) {
+      if (normalized != null &&
+          normalized.isNotEmpty &&
+          normalized != MachineHandshake.algoSunshine) {
         result.add(normalized);
       }
     }
 
-    addNormalized(setupSelectedAlgorithm);
-    addNormalized(cachedBySerial);
-    addNormalized(manualDefault);
-
-    // Some machines only answer STR handshake, so keep a fallback path.
-    result.add(MachineHandshake.algoRockspace);
+    // Try the most specific known match first, then fall back to aggregate auto.
+    addConcrete(cachedBySerial);
+    addConcrete(setupSelectedAlgorithm);
+    addConcrete(manualDefault);
+    result.add(MachineHandshake.algoSunshine);
 
     final seen = <String>{};
     result.removeWhere((algo) => !seen.add(algo));
@@ -399,6 +430,44 @@ class _MainScreenState extends State<MainScreen> {
     await prefs.setString('last_serial_port_path', openedPort);
     await prefs.setString('last_connected_serial', serial);
     await prefs.setString('serial_port_$serial', openedPort);
+  }
+
+  Future<bool> _runCachedFastPath(
+    CutterBluetoothService cutter,
+    SharedPreferences prefs, {
+    required String openedPort,
+    required _CachedAutoConnectRoute route,
+  }) async {
+    if (openedPort != route.port) return false;
+
+    debugPrint(
+      'AutoConnect: fast path on $openedPort using ${route.algorithm} for ${route.serial}',
+    );
+    final fastOk = await _runHandshakeAttempt(
+      cutter,
+      forcedAlgorithm: route.algorithm,
+      maxRounds: 1,
+      timeout: _fastPathHandshakeTimeout,
+      persistOnSuccess: true,
+      mode: 'auto_cached_fast',
+    );
+    if (!fastOk) {
+      debugPrint(
+        'AutoConnect: fast path miss on $openedPort, falling back to probe/serial detection',
+      );
+      return false;
+    }
+
+    final serialAfterSuccess = (cutter.serialNumber ?? route.serial).trim();
+    await _persistSuccessfulPortForSerial(
+      prefs,
+      openedPort: openedPort,
+      serial: serialAfterSuccess.isNotEmpty ? serialAfterSuccess : route.serial,
+    );
+    debugPrint(
+      'AutoConnect: fast path success on $openedPort using ${route.algorithm}',
+    );
+    return true;
   }
 
   Future<bool> _probeMachineResponse(CutterBluetoothService cutter) async {
@@ -481,9 +550,16 @@ class _MainScreenState extends State<MainScreen> {
     required bool hasImmediateRx,
     required int rounds,
   }) {
-    // Keep timeout long enough to finish a full algorithm pass.
-    final perRoundSeconds = hasImmediateRx ? 75 : 90;
-    return Duration(seconds: (perRoundSeconds * rounds) + 20);
+    final perRound = hasImmediateRx
+        ? _scanHandshakeTimeoutWithImmediateRx
+        : _scanHandshakeTimeoutWithoutImmediateRx;
+    return Duration(milliseconds: perRound.inMilliseconds * rounds);
+  }
+
+  Duration _directHandshakeTimeoutForAlgorithm(String algorithm) {
+    return algorithm == MachineHandshake.algoSunshine
+        ? _directSunshineHandshakeTimeout
+        : _directConcreteHandshakeTimeout;
   }
 
   Future<bool> _tryAutoConnect() async {
@@ -497,6 +573,7 @@ class _MainScreenState extends State<MainScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final ports = _buildPortCandidates(prefs);
+      final cachedRoute = _readCachedAutoConnectRoute(prefs);
 
       for (final port in ports) {
         debugPrint('AutoConnect: trying requested port $port');
@@ -505,6 +582,19 @@ class _MainScreenState extends State<MainScreen> {
           await cutter.connect(portPath: port);
           final openedPort = (cutter.lastOpenPortPath ?? port).trim();
           debugPrint('AutoConnect: opened $openedPort');
+
+          if (cachedRoute != null) {
+            final fastOk = await _runCachedFastPath(
+              cutter,
+              prefs,
+              openedPort: openedPort,
+              route: cachedRoute,
+            );
+            if (fastOk) {
+              success = true;
+              break;
+            }
+          }
 
           final hasRx = await _probeMachineResponse(cutter);
           if (hasRx) {
@@ -546,15 +636,13 @@ class _MainScreenState extends State<MainScreen> {
                 : (setupSelectedAlgorithm != null &&
                         algorithm == setupSelectedAlgorithm)
                     ? 'first_time_setup'
-                    : (algorithm == MachineHandshake.algoRockspace)
-                        ? 'fallback_rockspace'
-                        : 'manual_default';
+                    : 'manual_default';
             debugPrint('AutoConnect: direct $mode attempt: $algorithm');
             final directOk = await _runHandshakeAttempt(
               cutter,
               forcedAlgorithm: algorithm,
               maxRounds: 1,
-              timeout: const Duration(seconds: 30),
+              timeout: _directHandshakeTimeoutForAlgorithm(algorithm),
               persistOnSuccess: true,
               mode: mode,
             );
@@ -689,10 +777,6 @@ class _MainScreenState extends State<MainScreen> {
                         label: Text(AppStrings.of(context, 'home')),
                       ),
                       NavigationRailDestination(
-                        icon: const Icon(Icons.shopping_cart),
-                        label: Text(AppStrings.of(context, 'cart')),
-                      ),
-                      NavigationRailDestination(
                         icon: const Icon(Icons.person),
                         label: Text(AppStrings.of(context, 'profile')),
                       ),
@@ -721,10 +805,6 @@ class _MainScreenState extends State<MainScreen> {
                 BottomNavigationBarItem(
                   icon: const Icon(Icons.home),
                   label: AppStrings.of(context, 'home'),
-                ),
-                BottomNavigationBarItem(
-                  icon: const Icon(Icons.shopping_cart),
-                  label: AppStrings.of(context, 'cart'),
                 ),
                 BottomNavigationBarItem(
                   icon: const Icon(Icons.person),
