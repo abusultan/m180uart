@@ -124,6 +124,20 @@ class ApiService {
     await prefs.remove('auth_token');
   }
 
+  Future<void> logout() async {
+    final tokenToKill = _token;
+    await clearToken();
+    if (tokenToKill == null || tokenToKill.isEmpty) return;
+    try {
+      await _dio.post(
+        'logout',
+        options: Options(headers: {'Authorization': 'Bearer $tokenToKill'}),
+      );
+    } catch (_) {
+      // Keep local logout successful even if remote call fails.
+    }
+  }
+
   // --- Auth ---
 
   Future<LoginResponse> login(String login, String password) async {
@@ -203,10 +217,37 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>> requestDistributor() async {
+    try {
+      final response = await _dio.post('distributor/request');
+      final data = response.data is Map<String, dynamic>
+          ? response.data as Map<String, dynamic>
+          : <String, dynamic>{};
+      return {
+        'success': data['success'] == true,
+        'message': data['message']?.toString(),
+      };
+    } catch (e) {
+      if (e is DioException && e.response?.data is Map) {
+        final body = e.response!.data as Map;
+        return {
+          'success': false,
+          'message': body['message']?.toString() ?? 'Request failed',
+        };
+      }
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
   // --- Products ---
 
   Future<List<Representative>> getRepresentatives() async {
-    const endpoints = ['representatives', 'mandobs', 'reps'];
+    const endpoints = [
+      'distributors/all',
+      'representatives',
+      'mandobs',
+      'reps',
+    ];
     for (final endpoint in endpoints) {
       try {
         final response = await _dio.get(endpoint);
@@ -237,27 +278,263 @@ class ApiService {
     return [];
   }
 
-  Future<List<Category>> getCategories() async {
-    try {
-      final response = await _dio.get('categories');
-      print("Categories Response: ${response.data}");
-      if (response.data['success'] == true) {
-        if (response.data['data'] == null) {
-          print("API Data is null");
-          return [];
-        }
-        // Handle cases where data might be directly the list or nested in 'data' key
-        final rawData = response.data['data'];
-        final List list = (rawData is Map && rawData.containsKey('data'))
-            ? rawData['data']
-            : (rawData is List ? rawData : []);
-
-        print("Parsed List Length: ${list.length}");
-        return list.map((e) => Category.fromJson(e)).toList();
+  List<dynamic> _extractListFromPayload(dynamic payload) {
+    if (payload is Map && payload.containsKey('data')) {
+      final nested = payload['data'];
+      if (nested is List) return nested;
+      if (nested is Map && nested.containsKey('data')) {
+        final deep = nested['data'];
+        if (deep is List) return deep;
       }
-      return [];
+    }
+    if (payload is List) return payload;
+    return const [];
+  }
+
+  List<Category> _mapCategoryLikeList(List<dynamic> list, String entityType) {
+    return list
+        .whereType<Map<String, dynamic>>()
+        .map((e) {
+          final map = Map<String, dynamic>.from(e);
+          map['__entity_type'] = entityType;
+          return Category.fromJson(map);
+        })
+        .toList();
+  }
+
+  Future<List<dynamic>> _fetchList(
+    String endpoint, {
+    Map<String, dynamic>? queryParameters,
+  }) async {
+    final response = await _dio.get(endpoint, queryParameters: queryParameters);
+    if (response.data is! Map<String, dynamic>) {
+      return const [];
+    }
+    final payload = response.data as Map<String, dynamic>;
+    if (payload['success'] == false) return const [];
+    return _extractListFromPayload(payload['data']);
+  }
+
+  Future<List<dynamic>> _fetchAllPagedList(
+    String endpoint, {
+    Map<String, dynamic>? queryParameters,
+    int startPage = 1,
+  }) async {
+    final results = <dynamic>[];
+    var page = startPage;
+    const maxPages = 200;
+
+    for (var i = 0; i < maxPages; i++) {
+      final params = <String, dynamic>{...?queryParameters, 'page': page};
+      final response = await _dio.get(endpoint, queryParameters: params);
+
+      if (response.data is! Map<String, dynamic>) {
+        break;
+      }
+      final payload = response.data as Map<String, dynamic>;
+      if (payload['success'] == false || payload['data'] == null) {
+        break;
+      }
+
+      final pageItems = _extractListFromPayload(payload['data']);
+      if (pageItems.isNotEmpty) {
+        results.addAll(pageItems);
+      }
+
+      final dataRoot = payload['data'];
+      final lastPage =
+          dataRoot is Map ? int.tryParse('${dataRoot['last_page'] ?? ''}') : null;
+      final nextPageUrl = dataRoot is Map ? dataRoot['next_page_url'] : null;
+
+      if (lastPage != null) {
+        if (page >= lastPage) break;
+        page++;
+        continue;
+      }
+
+      if (nextPageUrl == null || pageItems.isEmpty) {
+        break;
+      }
+      page++;
+    }
+
+    return results;
+  }
+
+  Future<List<Category>> getCategories({String? typeMachineName}) async {
+    try {
+      final queryParameters = <String, dynamic>{};
+      if (typeMachineName != null && typeMachineName.trim().isNotEmpty) {
+        queryParameters['type_machine_name'] = typeMachineName.trim();
+      }
+
+      final list = await _fetchAllPagedList(
+        'categories',
+        queryParameters: queryParameters.isEmpty ? null : queryParameters,
+      );
+
+      return _mapCategoryLikeList(list, 'category');
     } catch (e) {
       print('Get Categories Error: $e');
+      return [];
+    }
+  }
+
+  Future<Category?> getCategoryById(
+    int categoryId, {
+    String? typeMachineName,
+  }) async {
+    try {
+      final queryParameters = <String, dynamic>{};
+      if (typeMachineName != null && typeMachineName.trim().isNotEmpty) {
+        queryParameters['type_machine_name'] = typeMachineName.trim();
+      }
+
+      final response = await _dio.get(
+        'categories/$categoryId',
+        queryParameters: queryParameters.isEmpty ? null : queryParameters,
+      );
+
+      if (response.data['success'] == true && response.data['data'] != null) {
+        return Category.fromJson(response.data['data']);
+      }
+      return null;
+    } catch (e) {
+      print('Get Category By ID Error: $e');
+      return null;
+    }
+  }
+
+  Future<List<Category>> getCategorySubcategories(
+    int categoryId, {
+    int page = 1,
+    String? typeMachineName,
+    String currentEntityType = 'category',
+  }) async {
+    final queryParameters = <String, dynamic>{'page': page};
+    if (typeMachineName != null && typeMachineName.trim().isNotEmpty) {
+      queryParameters['type_machine_name'] = typeMachineName.trim();
+    }
+
+    if (currentEntityType == 'model') {
+      return [];
+    }
+
+    try {
+      if (currentEntityType == 'category') {
+        final brands = await _fetchAllPagedList(
+          'categories/$categoryId/brands',
+          queryParameters: queryParameters,
+          startPage: page,
+        );
+        return _mapCategoryLikeList(brands, 'brand');
+      }
+
+      if (currentEntityType == 'brand') {
+        final models = await _fetchAllPagedList(
+          'brands/$categoryId/models',
+          queryParameters: queryParameters,
+          startPage: page,
+        );
+        return _mapCategoryLikeList(models, 'model');
+      }
+    } catch (_) {
+      // Fallback to legacy endpoints below.
+    }
+
+    try {
+      final legacy = await _fetchList(
+        'categories/$categoryId/subcategories',
+        queryParameters: queryParameters,
+      );
+      return _mapCategoryLikeList(legacy, 'category');
+    } catch (e) {
+      print('Get Category Subcategories Error: $e');
+      return [];
+    }
+  }
+
+  Future<List<Category>> getCategoriesPage({
+    int page = 1,
+    String? typeMachineName,
+  }) async {
+    try {
+      final queryParameters = <String, dynamic>{'page': page};
+      if (typeMachineName != null && typeMachineName.trim().isNotEmpty) {
+        queryParameters['type_machine_name'] = typeMachineName.trim();
+      }
+
+      final list = await _fetchList(
+        'categories',
+        queryParameters: queryParameters,
+      );
+      return _mapCategoryLikeList(list, 'category');
+    } catch (e) {
+      print('Get Categories Page Error: $e');
+      return [];
+    }
+  }
+
+  Future<List<Category>> getCategorySubcategoriesPage(
+    int categoryId, {
+    int page = 1,
+    String? typeMachineName,
+    String currentEntityType = 'category',
+  }) async {
+    final queryParameters = <String, dynamic>{'page': page};
+    if (typeMachineName != null && typeMachineName.trim().isNotEmpty) {
+      queryParameters['type_machine_name'] = typeMachineName.trim();
+    }
+    if (currentEntityType == 'model') {
+      return [];
+    }
+
+    try {
+      if (currentEntityType == 'category') {
+        final brands = await _fetchList(
+          'categories/$categoryId/brands',
+          queryParameters: queryParameters,
+        );
+        return _mapCategoryLikeList(brands, 'brand');
+      }
+
+      if (currentEntityType == 'brand') {
+        final models = await _fetchList(
+          'brands/$categoryId/models',
+          queryParameters: queryParameters,
+        );
+        return _mapCategoryLikeList(models, 'model');
+      }
+    } catch (_) {
+      // Fallback to legacy endpoint below.
+    }
+
+    try {
+      final legacy = await _fetchList(
+        'categories/$categoryId/subcategories',
+        queryParameters: queryParameters,
+      );
+      return _mapCategoryLikeList(legacy, 'category');
+    } catch (e) {
+      print('Get Category Subcategories Page Error: $e');
+      return [];
+    }
+  }
+
+  Future<List<Category>> getAllSubcategories({String? typeMachineName}) async {
+    try {
+      final queryParameters = <String, dynamic>{};
+      if (typeMachineName != null && typeMachineName.trim().isNotEmpty) {
+        queryParameters['type_machine_name'] = typeMachineName.trim();
+      }
+
+      final legacy = await _fetchList(
+        'subcategories',
+        queryParameters: queryParameters.isEmpty ? null : queryParameters,
+      );
+      return _mapCategoryLikeList(legacy, 'category');
+    } catch (e) {
+      print('Get All Subcategories Error: $e');
       return [];
     }
   }
@@ -266,37 +543,45 @@ class ApiService {
     int categoryId,
     int page, {
     String? query,
+    String? typeMachineName,
+    String entityType = 'category',
   }) async {
+    final Map<String, dynamic> params = {'page': page};
+    if (query != null && query.isNotEmpty) {
+      params['search'] = query;
+    }
+    if (typeMachineName != null && typeMachineName.trim().isNotEmpty) {
+      params['type_machine_name'] = typeMachineName.trim();
+    }
+
     try {
-      final Map<String, dynamic> params = {'page': page};
-      if (query != null && query.isNotEmpty) {
-        params['search'] = query;
+      if (entityType == 'model') {
+        final response = await _dio.get(
+          'models/$categoryId/products',
+          queryParameters: params,
+        );
+        final list = _extractListFromPayload(response.data['data']);
+        return list.map((e) => Product.fromJson(e)).toList();
       }
 
-      print("Getting products for cat: $categoryId, page: $page");
+      final filterKey = entityType == 'brand' ? 'brand_id' : 'category_id';
+      final response = await _dio.get(
+        'products',
+        queryParameters: {...params, filterKey: categoryId},
+      );
+      final list = _extractListFromPayload(response.data['data']);
+      return list.map((e) => Product.fromJson(e)).toList();
+    } catch (_) {
+      // Fallback to legacy endpoint.
+    }
+
+    try {
       final response = await _dio.get(
         'categories/$categoryId/products',
         queryParameters: params,
       );
-
-      print("Get Products Response: ${response.data}");
-      if (response.data['success'] == true) {
-        final rawData = response.data['data'];
-
-        // Handle both paginated (data.data) and non-paginated (data) responses
-        final List list;
-        if (rawData is Map && rawData.containsKey('data')) {
-          list = rawData['data']; // Paginated
-        } else if (rawData is List) {
-          list = rawData; // Direct list
-        } else {
-          list = [];
-        }
-
-        print("Parsed Products Length: ${list.length}");
-        return list.map((e) => Product.fromJson(e)).toList();
-      }
-      return [];
+      final list = _extractListFromPayload(response.data['data']);
+      return list.map((e) => Product.fromJson(e)).toList();
     } catch (e) {
       print('Get Products Error: $e');
       return [];
@@ -307,74 +592,141 @@ class ApiService {
     String query, {
     int page = 1,
     int? categoryId,
+    String categoryEntityType = 'category',
+    String? typeMachineName,
   }) async {
     try {
       final Map<String, dynamic> params = {'search': query, 'page': page};
       if (categoryId != null) {
-        params['category_id'] = categoryId;
+        if (categoryEntityType == 'brand') {
+          params['brand_id'] = categoryId;
+        } else if (categoryEntityType == 'model') {
+          params['model_id'] = categoryId;
+        } else {
+          params['category_id'] = categoryId;
+        }
+      }
+      if (typeMachineName != null && typeMachineName.trim().isNotEmpty) {
+        params['type_machine_name'] = typeMachineName.trim();
       }
 
       final response = await _dio.get('products', queryParameters: params);
 
-      print("Search Products Response: ${response.data}");
-      if (response.data['success'] == true) {
-        final rawData = response.data['data'];
-
-        final List list;
-        if (rawData is Map && rawData.containsKey('data')) {
-          list = rawData['data'];
-        } else if (rawData is List) {
-          list = rawData;
-        } else {
-          list = [];
-        }
-
-        return list.map((e) => Product.fromJson(e)).toList();
-      }
-      return [];
+      final list = _extractListFromPayload(response.data['data']);
+      return list.map((e) => Product.fromJson(e)).toList();
     } catch (e) {
       print('Search Products Error: $e');
       return [];
     }
   }
 
-  Future<List<Product>> searchAllProducts(String query, {int page = 1}) async {
+  Future<List<Product>> searchAllProducts(
+    String query, {
+    int page = 1,
+    String? typeMachineName,
+  }) async {
     try {
-      final Map<String, dynamic> params = {'search': query, 'page': page};
+      final cleanedQuery = query.trim().replaceAll(RegExp(r'\s+'), ' ');
+      final Map<String, dynamic> params = {
+        'search': cleanedQuery,
+        'q': cleanedQuery,
+        'page': page,
+      };
+      if (typeMachineName != null && typeMachineName.trim().isNotEmpty) {
+        params['type_machine_name'] = typeMachineName.trim();
+      }
 
-      final response = await _dio.get(
-        'search-all-products',
-        queryParameters: params,
-      );
+      try {
+        final response = await _dio.get(
+          'search-all-products',
+          queryParameters: params,
+        );
+        var list = _extractListFromPayload(response.data['data']);
 
-      print("Search All Products Response: ${response.data}");
-      if (response.data['success'] == true) {
-        final rawData = response.data['data'];
+        // If full-phrase search returns nothing, fallback to term-based search
+        // (useful for minor typos/order issues like "s25 utlra").
+        if (list.isEmpty && cleanedQuery.contains(' ')) {
+          final words = cleanedQuery
+              .split(' ')
+              .map((w) => w.trim())
+              .where((w) => w.length >= 2)
+              .toList();
+          final merged = <Map<String, dynamic>>[];
+          final seen = <int>{};
 
-        final List list;
-        if (rawData is Map && rawData.containsKey('data')) {
-          list = rawData['data'];
-        } else if (rawData is List) {
-          list = rawData;
-        } else {
-          list = [];
+          for (final word in words) {
+            final wordParams = <String, dynamic>{
+              'search': word,
+              'q': word,
+              'page': page,
+            };
+            if (typeMachineName != null && typeMachineName.trim().isNotEmpty) {
+              wordParams['type_machine_name'] = typeMachineName.trim();
+            }
+
+            final wordResponse = await _dio.get(
+              'search-all-products',
+              queryParameters: wordParams,
+            );
+            final wordList = _extractListFromPayload(wordResponse.data['data']);
+            for (final item in wordList) {
+              if (item is Map<String, dynamic>) {
+                final id = int.tryParse('${item['id'] ?? ''}') ?? 0;
+                if (id > 0 && seen.add(id)) {
+                  merged.add(item);
+                }
+              }
+            }
+          }
+          list = merged;
         }
 
         return list.map((e) => Product.fromJson(e)).toList();
+      } catch (_) {
+        final response = await _dio.get('products', queryParameters: params);
+        final list = _extractListFromPayload(response.data['data']);
+        return list.map((e) => Product.fromJson(e)).toList();
       }
-      return [];
     } catch (e) {
       print('Search All Products Error: $e');
       return [];
     }
   }
 
-  Future<List<ProductItem>> getProductItems(int productId) async {
+  Future<List<ProductItem>> getProductItems(
+    int productId, {
+    String? typeMachineName,
+  }) async {
     try {
-      final response = await _dio.get('products/$productId/items');
-      if (response.data['success'] == true) {
-        final List list = response.data['data'];
-        return list.map((e) => ProductItem.fromJson(e)).toList();
+      final queryParameters = <String, dynamic>{};
+      if (typeMachineName != null && typeMachineName.trim().isNotEmpty) {
+        queryParameters['type_machine_name'] = typeMachineName.trim();
+      }
+
+      try {
+        final response = await _dio.get(
+          'products/$productId/items',
+          queryParameters: queryParameters.isEmpty ? null : queryParameters,
+        );
+        final list = _extractListFromPayload(response.data['data']);
+        if (list.isNotEmpty) {
+          return list.map((e) => ProductItem.fromJson(e)).toList();
+        }
+      } catch (_) {
+        // Fallback to new product details endpoint.
+      }
+
+      final response = await _dio.get(
+        'products/$productId',
+        queryParameters: queryParameters.isEmpty ? null : queryParameters,
+      );
+
+      if (response.data is Map<String, dynamic> &&
+          response.data['success'] == true &&
+          response.data['data'] is Map) {
+        final item = Map<String, dynamic>.from(response.data['data'] as Map);
+        item['product_id'] = productId;
+        return [ProductItem.fromJson(item)];
       }
       return [];
     } catch (e) {
@@ -383,7 +735,7 @@ class ApiService {
     }
   }
 
-  Future<GoodsPaginationResponse?> getGoods({int page = 1}) async {
+    Future<GoodsPaginationResponse?> getGoods({int page = 1}) async {
     try {
       final response = await _dio.get('goods', queryParameters: {'page': page});
 
@@ -535,6 +887,83 @@ class ApiService {
     }
   }
 
+  Future<int?> getCutterIdBySerialNumber(String serialNumber) async {
+    try {
+      final response = await _dio.post(
+        'get-device-by-serial-number',
+        data: {'serial_number': serialNumber},
+        options: Options(contentType: Headers.formUrlEncodedContentType),
+      );
+      if (response.data['success'] == true && response.data['data'] is Map) {
+        final map = Map<String, dynamic>.from(response.data['data']);
+        final candidates = [map['cutter_id'], map['id'], map['device_id']];
+        for (final value in candidates) {
+          final parsed = int.tryParse('${value ?? ''}');
+          if (parsed != null && parsed > 0) return parsed;
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>> decrementRemainingPieces({
+    required int productId,
+    int? cutterId,
+  }) async {
+    try {
+      final payload = <String, dynamic>{'product_id': productId};
+      if (cutterId != null) payload['cutter_id'] = cutterId;
+      final response = await _dio.post(
+        'decrement-pieces',
+        data: payload,
+        options: Options(contentType: Headers.formUrlEncodedContentType),
+      );
+      final data = response.data is Map<String, dynamic>
+          ? response.data as Map<String, dynamic>
+          : <String, dynamic>{};
+      final success = data['success'] == true;
+
+      final nextRemaining = data['data'] is Map
+          ? int.tryParse('${data['data']['remaining_pieces'] ?? ''}')
+          : null;
+      if (success && _currentUser != null && nextRemaining != null) {
+        _currentUser = User(
+          id: _currentUser!.id,
+          name: _currentUser!.name,
+          email: _currentUser!.email,
+          phone: _currentUser!.phone,
+          address: _currentUser!.address,
+          remainingPieces: nextRemaining,
+          representativeName: _currentUser!.representativeName,
+          distributorName: _currentUser!.distributorName,
+          representativeId: _currentUser!.representativeId,
+        );
+      }
+
+      return {
+        'success': success,
+        'message': data['message']?.toString(),
+        'remaining_pieces': nextRemaining,
+      };
+    } catch (e) {
+      if (e is DioException && e.response?.data is Map) {
+        final body = e.response!.data as Map;
+        return {
+          'success': false,
+          'message': body['message']?.toString() ?? 'Decrement failed',
+          'remaining_pieces': null,
+        };
+      }
+      return {
+        'success': false,
+        'message': e.toString(),
+        'remaining_pieces': null,
+      };
+    }
+  }
+
   Future<bool> recordCutterUse(
     String productItemId,
     String serialNumber,
@@ -636,3 +1065,4 @@ class ApiService {
     return Uri.encodeFull(full);
   }
 }
+

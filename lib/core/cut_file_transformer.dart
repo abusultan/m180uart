@@ -116,6 +116,104 @@ class CutFileTransformer {
     );
   }
 
+  static CutPathData mirrorPathData(CutPathData data) {
+    final mirroredPoints = <Offset>[];
+    for (final p in data.points) {
+      final rx = (data.maxX + data.minX) - p.dx;
+      mirroredPoints.add(Offset(rx, p.dy));
+    }
+
+    return CutPathData(
+      points: mirroredPoints,
+      drawFlags: data.drawFlags,
+      minX: data.minX,
+      maxX: data.maxX,
+      minY: data.minY,
+      maxY: data.maxY,
+    );
+  }
+
+  static List<int> applyMirrorToBytes({
+    required List<int> inputBytes,
+  }) {
+    String text;
+    try {
+      text = latin1.decode(inputBytes);
+    } catch (_) {
+      return inputBytes;
+    }
+
+    final trimmed = text.trim();
+    if (!trimmed.contains('WSJP=')) {
+      return inputBytes;
+    }
+
+    final normalized =
+        trimmed.replaceAll('IN ', '').replaceAll(' @', '').trim();
+    final parts = normalized.split(RegExp(r'\s+'));
+    if (parts.isEmpty) return inputBytes;
+
+    final header = parts.first;
+    if (!header.contains('WSJP=')) return inputBytes;
+
+    final mappingStr = header.replaceAll('WSJP=', '');
+    final mapping = _buildMapping(mappingStr);
+    if (mapping == null || mapping.length != 10) return inputBytes;
+
+    final tokens = List<String>.from(parts);
+    final decodedPoints = <_PointToken>[];
+
+    for (int i = 1; i < tokens.length; i++) {
+      final token = tokens[i];
+      final split = token.split(',');
+      if (split.length != 2) continue;
+
+      final xPart = split[0];
+      final yPart = split[1];
+      final xPrefix = _prefixOf(xPart);
+      final yPrefix = _prefixOf(yPart);
+      final xDecoded = _decodeNumber(_stripPrefix(xPart), mapping);
+      final yDecoded = _decodeNumber(_stripPrefix(yPart), mapping);
+      if (xDecoded == null || yDecoded == null) continue;
+
+      final xVal = int.tryParse(xDecoded);
+      final yVal = int.tryParse(yDecoded);
+      if (xVal == null || yVal == null) continue;
+      if (xVal == 0 && yVal == 0) continue;
+
+      decodedPoints.add(
+        _PointToken(
+          index: i,
+          x: xVal,
+          y: yVal,
+          xPrefix: xPrefix,
+          yPrefix: yPrefix,
+        ),
+      );
+    }
+
+    if (decodedPoints.isEmpty) return inputBytes;
+
+    int minX = decodedPoints.first.x;
+    int maxX = decodedPoints.first.x;
+    for (final p in decodedPoints) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+    }
+
+    for (final p in decodedPoints) {
+      final mirroredX = (maxX + minX) - p.x;
+      p.x = mirroredX.round();
+
+      final xEncoded = _encodeNumber(p.x.toString(), mapping);
+      final yEncoded = _encodeNumber(p.y.toString(), mapping);
+      tokens[p.index] = '${p.xPrefix}$xEncoded,${p.yPrefix}$yEncoded';
+    }
+
+    final rebuilt = 'IN ${tokens.join(' ')} @ ';
+    return latin1.encode(rebuilt);
+  }
+
   static List<int> applyAngleToBytes({
     required List<int> inputBytes,
     required double angleDegrees,

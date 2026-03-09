@@ -5,6 +5,7 @@ import '../core/handshake_response_resolver.dart';
 import 'api_service.dart';
 
 class CutterBluetoothService {
+  static const String _lastTypeMachineNameKey = 'last_type_machine_name';
   static final CutterBluetoothService _instance =
       CutterBluetoothService._internal();
 
@@ -20,16 +21,20 @@ class CutterBluetoothService {
   final EventChannel _eventChannel = const EventChannel('serial_port/events');
 
   StreamSubscription? _eventSubscription;
-  final _receivedDataController = StreamController<String>.broadcast();
-  final _serialUpdateController = StreamController<String?>.broadcast();
+  final _receivedDataController = StreamController<String>();
+  final _serialUpdateController = StreamController<String?>();
+  late final Stream<String> _receivedDataBroadcast =
+      _receivedDataController.stream.asBroadcastStream();
+  late final Stream<String?> _serialUpdateBroadcast =
+      _serialUpdateController.stream.asBroadcastStream();
   String _autoHandshakeBuffer = "";
   bool _suppressAutoHandshake = false;
 
   bool _isConnected = false;
   Object? _connectedDevice;
 
-  Stream<String> get receivedDataStream => _receivedDataController.stream;
-  Stream<String?> get serialStream => _serialUpdateController.stream;
+  Stream<String> get receivedDataStream => _receivedDataBroadcast;
+  Stream<String?> get serialStream => _serialUpdateBroadcast;
 
   Object? get connectedDevice => _connectedDevice;
   String? _serialNumber;
@@ -42,6 +47,8 @@ class CutterBluetoothService {
   String? _preferredHandshakeAlgo;
   String? _preferredHandshakeMode;
   final Map<String, String> _cachedHandshakeBySerial = {};
+  bool _isBypassMode = false;
+  String? _cachedAgentType;
 
   String _serialCacheKey(String serial) => serial.trim().toUpperCase();
 
@@ -74,6 +81,12 @@ class CutterBluetoothService {
 
     _serialNumber = normalized;
     _serialUpdateController.add(normalized);
+    _persistTypeMachineName(
+      _resolveTypeMachineName(
+        serial: normalized,
+        agentType: _successfulAgentType,
+      ),
+    );
     _persistLastConnectedSerial(normalized);
     _persistLastMachineType(normalized);
     _syncDeviceHandshake(normalized);
@@ -191,9 +204,45 @@ class CutterBluetoothService {
 
   String? get preferredHandshakeMode => _preferredHandshakeMode;
   String? get preferredHandshakeAlgorithm => _preferredHandshakeAlgo;
+  bool get isBypassMode => _isBypassMode;
+  String? get cachedAgentType => _cachedAgentType ?? _successfulAgentType;
 
   String _normalizeHandshakeAlgorithm(String? raw) {
     return HandshakeResponseResolver.normalizeOrDefault(raw);
+  }
+
+  String _resolveTypeMachineName({String? serial, String? agentType}) {
+    final upperSerial = (serial ?? '').toUpperCase();
+    final upperAgent = (agentType ?? '').toUpperCase();
+
+    if (upperSerial.startsWith('DX')) return 'mechanic';
+    if (upperSerial.startsWith('DH')) return 'atb';
+
+    if (upperAgent == 'ROCKSPACE_BLUE' ||
+        upperSerial.startsWith('C180B') ||
+        upperSerial.startsWith('ZC2') ||
+        upperSerial.startsWith('ZC3')) {
+      return 'rock_space';
+    }
+
+    if (upperAgent == 'SUNSHINE' ||
+        upperAgent == 'HANDSHAKE_NEW' ||
+        upperAgent == 'SUNSHINEDQ' ||
+        upperSerial.startsWith('SUNSHINE') ||
+        upperSerial.startsWith('SS')) {
+      return 'sunshine';
+    }
+
+    return 'DQ';
+  }
+
+  Future<void> _persistTypeMachineName(String typeMachineName) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_lastTypeMachineNameKey, typeMachineName);
+    } catch (e) {
+      print("Error persisting type_machine_name: $e");
+    }
   }
 
   String? _resolveBackendMachineType(
@@ -223,7 +272,8 @@ class CutterBluetoothService {
     String serial,
     String? handshakeAlgorithm,
   ) {
-    final normalizedAlgorithm = _normalizeHandshakeAlgorithm(handshakeAlgorithm);
+    final normalizedAlgorithm =
+        _normalizeHandshakeAlgorithm(handshakeAlgorithm);
     if (normalizedAlgorithm == HandshakeResponseResolver.algoMechanicUart) {
       return 'Mechanic UART';
     }
@@ -695,5 +745,42 @@ class CutterBluetoothService {
   // Kept for compatibility with older UI calls
   Future<void> turnOnBluetooth() async {
     // No-op for serial connection
+  }
+
+  // Compatibility helpers used by the newer UI flow.
+  Future<String> getTypeMachineNameForItems() async {
+    final resolved = _resolveTypeMachineName(
+      serial: _serialNumber,
+      agentType: _successfulAgentType,
+    );
+    if (resolved.isNotEmpty) {
+      await _persistTypeMachineName(resolved);
+      return resolved;
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(_lastTypeMachineNameKey) ?? 'DQ';
+    } catch (_) {
+      return 'DQ';
+    }
+  }
+
+  void setBypassMode(
+    bool enabled, {
+    String? simulateType,
+    String? agentType,
+    String? simulatedSerial,
+  }) {
+    _isBypassMode = enabled;
+    final selected = (agentType ?? simulateType ?? '').trim();
+    if (selected.isNotEmpty) {
+      _cachedAgentType = selected;
+      _persistTypeMachineName(
+        _resolveTypeMachineName(serial: simulatedSerial, agentType: selected),
+      );
+    }
+    if (simulatedSerial != null && simulatedSerial.trim().isNotEmpty) {
+      setSerialNumber(simulatedSerial.trim());
+    }
   }
 }

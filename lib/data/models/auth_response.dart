@@ -6,6 +6,7 @@ class User {
   final String address;
   final int remainingPieces;
   final String? representativeName;
+  final String? distributorName;
   final int? representativeId;
 
   User({
@@ -16,6 +17,7 @@ class User {
     required this.address,
     required this.remainingPieces,
     this.representativeName,
+    this.distributorName,
     this.representativeId,
   });
 
@@ -32,6 +34,10 @@ class User {
           json['mandob_name'] ??
           json['rep_name'] ??
           json['representative'],
+      distributorName:
+          json['distributor_name'] ??
+          json['dealer_name'] ??
+          json['supplier_name'],
       representativeId:
           json['representative_id'] ??
           json['mandob_id'] ??
