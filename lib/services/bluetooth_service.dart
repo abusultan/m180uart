@@ -215,9 +215,6 @@ class CutterBluetoothService {
     final upperSerial = (serial ?? '').toUpperCase();
     final upperAgent = (agentType ?? '').toUpperCase();
 
-    if (upperSerial.startsWith('DX')) return 'mechanic';
-    if (upperSerial.startsWith('DH')) return 'atb';
-
     if (upperAgent == 'ROCKSPACE_BLUE' ||
         upperSerial.startsWith('C180B') ||
         upperSerial.startsWith('ZC2') ||
