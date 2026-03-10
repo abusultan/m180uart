@@ -419,17 +419,35 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   }
 
   Future<bool> _performHandshakeSync() async {
+    final serial = (_bluetooth.serialNumber ?? '').trim();
+
+    String? preferred = MachineHandshake.normalizeAlgorithm(
+      _bluetooth.successfulHandshakeType,
+    );
+    if ((preferred == null || preferred.isEmpty) && serial.isNotEmpty) {
+      preferred = MachineHandshake.normalizeAlgorithm(
+        await _bluetooth.getCachedHandshake(serial),
+      );
+    }
+
     final completer = Completer<bool>();
     final handshake = MachineHandshake(
       _bluetooth,
+      preferredAlgorithm: preferred,
+      handshakeMode: 'sync',
+      persistOnSuccess: true,
       onStatusUpdate: (s) => setState(() => _status = s),
       onHandshakeComplete: (s) => completer.complete(s),
     );
     handshake.startHandshake();
-    return await completer.future.timeout(
-      const Duration(seconds: 15),
-      onTimeout: () => false,
-    );
+    try {
+      return await completer.future.timeout(
+        const Duration(seconds: 20),
+        onTimeout: () => false,
+      );
+    } finally {
+      handshake.dispose();
+    }
   }
 
   @override
@@ -583,4 +601,3 @@ class StaticCutPainter extends CustomPainter {
   bool shouldRepaint(covariant StaticCutPainter old) =>
       old.data != data || old.color != color;
 }
-
