@@ -173,22 +173,31 @@ class ApiService {
     String? location,
   }) async {
     try {
+      final cleanedName = name.trim();
+      final cleanedEmail = email.trim();
+      final cleanedPhone = phone.trim();
+      final cleanedAddress = address.trim();
+      final cleanedPassword = password.trim();
+      final cleanedPasswordConfirmation = passwordConfirmation.trim();
+      final cleanedLocation = (location ?? address).trim();
+      final cleanedMachineType = machineType?.trim() ?? '';
+      final cleanedMachineSerial = machineSerial?.trim() ?? '';
       final normalizedOwnership = _normalizeMachineOwnership(machineOwnership);
       final Map<String, dynamic> payload = {
-        'name': name,
-        'email': email,
-        'phone': phone,
-        'address': address,
-        'location': (location ?? address).trim(),
-        'password': password,
-        'password_confirmation': passwordConfirmation,
+        'name': cleanedName,
+        'email': cleanedEmail,
+        'phone': cleanedPhone,
+        'address': cleanedAddress,
+        'location': cleanedLocation,
+        'password': cleanedPassword,
+        'password_confirmation': cleanedPasswordConfirmation,
       };
 
-      if (machineType != null && machineType.isNotEmpty) {
-        payload['machine_type'] = machineType;
+      if (cleanedMachineType.isNotEmpty) {
+        payload['type_machine'] = cleanedMachineType;
       }
-      if (machineSerial != null && machineSerial.isNotEmpty) {
-        payload['serial_number'] = machineSerial;
+      if (cleanedMachineSerial.isNotEmpty) {
+        payload['serial_number'] = cleanedMachineSerial;
       }
       if (normalizedOwnership != null) {
         payload['machine_ownership'] = normalizedOwnership;

@@ -23,12 +23,12 @@ class User {
 
   factory User.fromJson(Map<String, dynamic> json) {
     return User(
-      id: json['id'] ?? 0,
-      name: json['name'] ?? '',
-      email: json['email'] ?? '',
-      phone: json['phone'] ?? '',
-      address: json['address'] ?? '',
-      remainingPieces: json['remaining_pieces'] ?? 0,
+      id: _toInt(json['id']),
+      name: json['name']?.toString() ?? '',
+      email: json['email']?.toString() ?? '',
+      phone: json['phone']?.toString() ?? '',
+      address: json['address']?.toString() ?? '',
+      remainingPieces: _toInt(json['remaining_pieces']),
       representativeName:
           json['representative_name'] ??
           json['mandob_name'] ??
@@ -40,11 +40,26 @@ class User {
           json['dealer_name'] ??
           json['supplier_name'],
       representativeId:
-          json['representative_id'] ??
-          json['distributor_id'] ??
-          json['mandob_id'] ??
-          json['rep_id'],
+          _toNullableInt(
+            json['representative_id'] ??
+                json['distributor_id'] ??
+                json['mandob_id'] ??
+                json['rep_id'],
+          ),
     );
+  }
+
+  static int _toInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  static int? _toNullableInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString());
   }
 }
 
@@ -62,18 +77,29 @@ class LoginResponse {
   });
 
   factory LoginResponse.fromJson(Map<String, dynamic> json) {
-    bool success = json['success'] ?? false;
-    String msg = json['message'] ?? '';
+    final success = json['success'] == true;
+    final msg = json['message']?.toString() ?? '';
+    final nestedData = json['data'] is Map<String, dynamic>
+        ? json['data'] as Map<String, dynamic>
+        : json['data'] is Map
+        ? Map<String, dynamic>.from(json['data'] as Map)
+        : <String, dynamic>{};
 
-    User? usr;
-    String tkn = '';
+    final userJson = nestedData['user'] is Map<String, dynamic>
+        ? nestedData['user'] as Map<String, dynamic>
+        : nestedData['user'] is Map
+        ? Map<String, dynamic>.from(nestedData['user'] as Map)
+        : json['user'] is Map<String, dynamic>
+        ? json['user'] as Map<String, dynamic>
+        : json['user'] is Map
+        ? Map<String, dynamic>.from(json['user'] as Map)
+        : null;
 
-    if (json['data'] != null) {
-      if (json['data']['user'] != null) {
-        usr = User.fromJson(json['data']['user']);
-      }
-      tkn = json['data']['token'] ?? '';
-    }
+    final usr = userJson == null ? null : User.fromJson(userJson);
+    final tkn =
+        nestedData['token']?.toString() ??
+        json['token']?.toString() ??
+        '';
 
     return LoginResponse(success: success, message: msg, user: usr, token: tkn);
   }

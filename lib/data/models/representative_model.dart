@@ -21,10 +21,16 @@ class Representative {
 
   factory Representative.fromJson(Map<String, dynamic> json) {
     return Representative(
-      id: json['id'] ?? 0,
-      name: json['name'] ?? '',
-      nameAr: json['name_ar'] ?? '',
-      nameEn: json['name_en'] ?? '',
+      id: _toInt(json['id']),
+      name: json['name']?.toString() ?? '',
+      nameAr: json['name_ar']?.toString() ?? '',
+      nameEn: json['name_en']?.toString() ?? '',
     );
+  }
+
+  static int _toInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 }

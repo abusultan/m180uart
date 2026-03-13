@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../services/api_service.dart';
 import '../../core/app_strings.dart';
@@ -18,18 +19,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
   final _addressController = TextEditingController();
-  final _machineTypeController = TextEditingController();
+  final _locationController = TextEditingController();
   final _machineSerialController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
+  static const List<String> _machineTypes = [
+    'sunshine',
+    'crust',
+    'rockspace',
+    'mechanic',
+    'atb',
+  ];
   bool _isLoading = false;
   String? _error;
   bool _passwordVisible = false;
   bool _confirmPasswordVisible = false;
   String _machineOwnership = 'owner';
   bool _loadingReps = false;
+  bool _gettingLocation = false;
   List<Representative> _representatives = [];
   int? _selectedRepresentativeId;
+  String? _selectedMachineType;
 
   @override
   void initState() {
@@ -43,7 +53,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _emailController.dispose();
     _phoneController.dispose();
     _addressController.dispose();
-    _machineTypeController.dispose();
+    _locationController.dispose();
     _machineSerialController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
@@ -62,6 +72,66 @@ class _RegisterScreenState extends State<RegisterScreen> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _loadingReps = false);
+    }
+  }
+
+  Future<void> _getCurrentLocation() async {
+    if (_gettingLocation) return;
+
+    setState(() {
+      _gettingLocation = true;
+      _error = null;
+    });
+
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        throw Exception(
+          AppStrings.of(context, 'error_location_services_disabled'),
+        );
+      }
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied) {
+        throw Exception(
+          AppStrings.of(context, 'error_location_permission_denied'),
+        );
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        throw Exception(
+          AppStrings.of(context, 'error_location_permission_denied_forever'),
+        );
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      );
+      final locationUrl =
+          'https://www.google.com/maps/search/?api=1&query='
+          '${position.latitude},${position.longitude}';
+
+      if (!mounted) return;
+      setState(() {
+        _locationController.text = locationUrl;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e is Exception
+            ? e.toString().replaceFirst('Exception: ', '')
+            : AppStrings.of(context, 'error_location_failed');
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _gettingLocation = false);
+      }
     }
   }
 
@@ -125,11 +195,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final email = _emailController.text.trim();
       final phone = _phoneController.text.trim();
       final address = _addressController.text.trim();
-      final machineType = _machineTypeController.text.trim();
+      final machineType = _selectedMachineType?.trim() ?? '';
       final machineSerial = _machineSerialController.text.trim();
       final pass = _passwordController.text.trim();
       final confirmPass = _confirmPasswordController.text.trim();
-      final registrationLocation = address;
+      final registrationLocation = _locationController.text.trim();
 
       final response = await ApiService().register(
         name,
@@ -306,10 +376,69 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // Machine Type
                 TextFormField(
-                  controller: _machineTypeController,
+                  controller: _locationController,
+                  readOnly: true,
+                  enableInteractiveSelection: false,
                   style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: AppStrings.of(context, 'location'),
+                    labelStyle: const TextStyle(color: Colors.grey),
+                    filled: true,
+                    fillColor: const Color(0xFF1E1E1E),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                    prefixIcon: const Icon(
+                      Icons.my_location,
+                      color: Color(0xFF00FF88),
+                    ),
+                    suffixIcon: Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: TextButton(
+                        onPressed: _gettingLocation ? null : _getCurrentLocation,
+                        child: _gettingLocation
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Color(0xFF00FF88),
+                                ),
+                              )
+                            : Text(AppStrings.of(context, 'get_location')),
+                      ),
+                    ),
+                    suffixIconConstraints: const BoxConstraints(
+                      minWidth: 110,
+                      minHeight: 40,
+                    ),
+                  ),
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return AppStrings.of(context, 'error_location_empty');
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+
+                // Machine Type
+                DropdownButtonFormField<String>(
+                  initialValue: _selectedMachineType,
+                  items: _machineTypes
+                      .map(
+                        (type) => DropdownMenuItem(
+                          value: type,
+                          child: Text(type),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    setState(() => _selectedMachineType = value);
+                  },
+                  dropdownColor: const Color(0xFF1E1E1E),
                   decoration: InputDecoration(
                     labelText: AppStrings.of(context, 'machine_type'),
                     labelStyle: const TextStyle(color: Colors.grey),
@@ -324,6 +453,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       color: Color(0xFF00FF88),
                     ),
                   ),
+                  style: const TextStyle(color: Colors.white),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
                       return AppStrings.of(context, 'error_generic');
