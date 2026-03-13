@@ -60,7 +60,9 @@ class SvgRenderer extends StatelessWidget {
               if (svgText.isEmpty) return _buildNetworkFallback(downloadUrl);
 
               if (isCutLine) {
-                final transformed = toOutlineSvg(svgText);
+                final transformed = Platform.isIOS
+                    ? toOutlineSvgHeavy(svgText)
+                    : toOutlineSvg(svgText);
                 return Container(
                   color: Colors.white,
                   child: svg.SvgPicture.string(
@@ -68,12 +70,30 @@ class SvgRenderer extends StatelessWidget {
                     width: width,
                     height: height,
                     fit: fit,
+                    allowDrawingOutsideViewBox: true,
+                    clipBehavior: Clip.none,
                     placeholderBuilder: (_) => const Center(
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
                         color: Color(0xFF00FF88),
                       ),
                     ),
+                    errorBuilder: (context, error, stackTrace) {
+                      final fallbackSvg = Platform.isIOS
+                          ? toOutlineSvgLight(svgText)
+                          : toOutlineSvg(svgText);
+                      return svg.SvgPicture.string(
+                        fallbackSvg,
+                        width: width,
+                        height: height,
+                        fit: fit,
+                        allowDrawingOutsideViewBox: true,
+                        clipBehavior: Clip.none,
+                        errorBuilder: (c, e, s) => _buildNetworkFallback(
+                          downloadUrl,
+                        ),
+                      );
+                    },
                   ),
                 );
               }

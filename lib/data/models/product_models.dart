@@ -13,6 +13,26 @@ String _sanitizeName(dynamic value) {
   return _stripChineseText(raw);
 }
 
+String _firstNonEmptyValue(
+  Map<String, dynamic> json,
+  List<String> keys,
+) {
+  for (final key in keys) {
+    final text = (json[key] ?? '').toString().trim();
+    if (text.isNotEmpty && text.toLowerCase() != 'null') {
+      return text;
+    }
+  }
+  return '';
+}
+
+bool _looksLikeSvgUrl(String value) {
+  final lower = value.trim().toLowerCase();
+  return lower.contains('.svg') ||
+      lower.contains('image/svg') ||
+      lower.contains('/svg');
+}
+
 int _toInt(dynamic value) {
   if (value is int) return value;
   if (value is num) return value.toInt();
@@ -90,7 +110,8 @@ class Product {
     final rawTypeMachineName =
         json['type_machine_name'] ?? json['typeMachineName'];
     final modelJson = json['model'];
-    final brandJson = modelJson is Map<String, dynamic> ? modelJson['brand'] : null;
+    final brandJson =
+        modelJson is Map<String, dynamic> ? modelJson['brand'] : null;
     final isModelEntity =
         json.containsKey('brand_id') && !json.containsKey('model_id');
     return Product(
@@ -100,7 +121,9 @@ class Product {
       image: (json['image_url'] ?? json['image'] ?? '').toString(),
       categoryId: _toInt(
         json['category_id'] ??
-            (brandJson is Map<String, dynamic> ? brandJson['category_id'] : null),
+            (brandJson is Map<String, dynamic>
+                ? brandJson['category_id']
+                : null),
       ),
       entityType: isModelEntity ? 'model' : 'product',
       typeMachineName: rawTypeMachineName?.toString(),
@@ -114,6 +137,7 @@ class ProductItem {
   final String nameAr;
   final String nameEn;
   final String imageUrl;
+  final String previewUrl;
   final String sjcUrl;
   final String pltUrl;
 
@@ -123,30 +147,95 @@ class ProductItem {
     required this.nameAr,
     required this.nameEn,
     required this.imageUrl,
+    required this.previewUrl,
     required this.sjcUrl,
     required this.pltUrl,
   });
 
   factory ProductItem.fromJson(Map<String, dynamic> json) {
-    final fileUrl =
-        (json['FileUrl'] ??
-                json['file_url'] ??
-                json['fileUrl'] ??
-                json['sjc_url'] ??
-                json['plt_url'] ??
-                json['file'] ??
-                '')
-            .toString();
+    final imageUrl = _firstNonEmptyValue(json, [
+      'image_url',
+      'image',
+      'photo',
+      'cover',
+      'phone_image',
+    ]);
+    final previewUrl = _firstNonEmptyValue(json, [
+      'preview_image_url',
+      'preview_image',
+      'preview_url',
+      'thumbnail_url',
+      'thumbnail',
+      'thumb_url',
+      'thumb',
+      'detail_icon',
+      'cut_image_url',
+      'cut_image',
+      'outline_image_url',
+      'outline_image',
+      'svg_preview_url',
+      'svg_preview',
+      'svg_url',
+      'svg',
+    ]);
+    final fallbackFileUrl = _firstNonEmptyValue(json, [
+      'FileUrl',
+      'file_url',
+      'fileUrl',
+      'file',
+    ]);
+    final sjcUrl = _firstNonEmptyValue(json, ['sjc_url', 'sjcUrl']).isNotEmpty
+        ? _firstNonEmptyValue(json, ['sjc_url', 'sjcUrl'])
+        : fallbackFileUrl;
+    final pltUrl = _firstNonEmptyValue(json, ['plt_url', 'pltUrl']).isNotEmpty
+        ? _firstNonEmptyValue(json, ['plt_url', 'pltUrl'])
+        : fallbackFileUrl;
+    final resolvedPreviewUrl = previewUrl.isNotEmpty
+        ? previewUrl
+        : (_looksLikeSvgUrl(imageUrl)
+            ? imageUrl
+            : (_looksLikeSvgUrl(pltUrl)
+                ? pltUrl
+                : (_looksLikeSvgUrl(sjcUrl) ? sjcUrl : '')));
 
     return ProductItem(
       id: _toInt(json['id']),
       productId: _toInt(json['product_id'] ?? json['id']),
       nameAr: _sanitizeName(json['name_ar'] ?? json['name']),
       nameEn: _sanitizeName(json['name_en'] ?? json['name']),
-      imageUrl: (json['image_url'] ?? json['image'] ?? '').toString(),
-      sjcUrl: fileUrl,
-      pltUrl: fileUrl,
+      imageUrl: imageUrl,
+      previewUrl: resolvedPreviewUrl,
+      sjcUrl: sjcUrl,
+      pltUrl: pltUrl,
     );
+  }
+
+  String get preferredPreviewUrl {
+    final candidates = <String>[
+      previewUrl,
+      if (_looksLikeSvgUrl(imageUrl)) imageUrl,
+      if (_looksLikeSvgUrl(pltUrl)) pltUrl,
+      if (_looksLikeSvgUrl(sjcUrl)) sjcUrl,
+      imageUrl,
+      pltUrl,
+      sjcUrl,
+    ];
+    for (final candidate in candidates) {
+      if (candidate.trim().isNotEmpty) return candidate;
+    }
+    return '';
+  }
+
+  String get preferredCutFileUrl {
+    final candidates = <String>[
+      pltUrl,
+      sjcUrl,
+      if (_looksLikeSvgUrl(previewUrl)) previewUrl,
+    ];
+    for (final candidate in candidates) {
+      if (candidate.trim().isNotEmpty) return candidate;
+    }
+    return '';
   }
 }
 
@@ -258,9 +347,8 @@ class GoodsPaginationResponse {
 
   factory GoodsPaginationResponse.fromJson(Map<String, dynamic> json) {
     final dataJson = json['data'] as Map<String, dynamic>;
-    final goodsList = (dataJson['data'] as List)
-        .map((item) => Good.fromJson(item))
-        .toList();
+    final goodsList =
+        (dataJson['data'] as List).map((item) => Good.fromJson(item)).toList();
 
     return GoodsPaginationResponse(
       currentPage: dataJson['current_page'] ?? 1,
@@ -451,9 +539,8 @@ class OrdersPaginationResponse {
   factory OrdersPaginationResponse.fromJson(Map<String, dynamic> json) {
     // Note: In the user JSON, data.data contains the list
     final dataRoot = json['data'] as Map<String, dynamic>;
-    final ordersList = (dataRoot['data'] as List)
-        .map((item) => Order.fromJson(item))
-        .toList();
+    final ordersList =
+        (dataRoot['data'] as List).map((item) => Order.fromJson(item)).toList();
 
     return OrdersPaginationResponse(
       currentPage: dataRoot['current_page'] ?? 1,

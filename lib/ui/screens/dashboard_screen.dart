@@ -9,6 +9,7 @@ import 'login_screen.dart';
 import 'scan_screen.dart';
 import 'device_detail_screen.dart';
 import 'dart:async';
+import '../widgets/product_thumbnail_widget.dart';
 
 class DashboardScreen extends StatefulWidget {
   final List<Category>? initialSubCategories;
@@ -56,6 +57,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   bool get _isPagedHierarchyLevel => widget.initialSubCategories == null;
 
+  int _responsiveGridCrossAxisCount(double width) {
+    if (width >= 1300) return 5;
+    if (width >= 980) return 4;
+    if (width >= 700) return 3;
+    return 2;
+  }
+
+  double _responsiveGridChildAspectRatio(double width) {
+    if (width >= 1300) return 1.08;
+    if (width >= 980) return 1.0;
+    if (width >= 700) return 0.92;
+    return 1.0;
+  }
+
   Future<void> _openProduct(Product product) async {
     if (product.entityType == 'model') {
       if (!mounted) return;
@@ -79,8 +94,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (_isOpeningProduct) return;
     _isOpeningProduct = true;
     try {
-      final typeMachineName = await CutterBluetoothService()
-          .getTypeMachineNameForItems();
+      final typeMachineName =
+          await CutterBluetoothService().getTypeMachineNameForItems();
       final items = await ApiService().getProductItems(
         product.id,
         typeMachineName: typeMachineName,
@@ -174,8 +189,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (mounted) setState(() {});
 
     try {
-      final typeMachineName = await CutterBluetoothService()
-          .getTypeMachineNameForItems();
+      final typeMachineName =
+          await CutterBluetoothService().getTypeMachineNameForItems();
       late final List<Category> pageItems;
       if (widget.currentCategoryId == null) {
         pageItems = await ApiService().getCategoriesPage(
@@ -206,8 +221,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<List<Category>> _loadCurrentCategories() async {
-    final typeMachineName = await CutterBluetoothService()
-        .getTypeMachineNameForItems();
+    final typeMachineName =
+        await CutterBluetoothService().getTypeMachineNameForItems();
 
     if (widget.currentCategoryId != null) {
       final subcategories = await ApiService().getCategorySubcategories(
@@ -231,9 +246,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   String _applyTypoCorrections(String query) {
     final words = query.split(' ');
-    final corrected = words
-        .map((w) => _commonTypos[w.toLowerCase()] ?? w)
-        .join(' ');
+    final corrected =
+        words.map((w) => _commonTypos[w.toLowerCase()] ?? w).join(' ');
     return corrected;
   }
 
@@ -278,8 +292,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _suggestionDebounce = Timer(const Duration(milliseconds: 250), () async {
       final reqId = ++_suggestionRequestId;
       try {
-        final typeMachineName = await CutterBluetoothService()
-            .getTypeMachineNameForItems();
+        final typeMachineName =
+            await CutterBluetoothService().getTypeMachineNameForItems();
         final products = await ApiService().searchAllProducts(
           normalized,
           typeMachineName: typeMachineName,
@@ -329,8 +343,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       });
 
       try {
-        final typeMachineName = await CutterBluetoothService()
-            .getTypeMachineNameForItems();
+        final typeMachineName =
+            await CutterBluetoothService().getTypeMachineNameForItems();
         final products = await ApiService().searchAllProducts(
           normalized,
           typeMachineName: typeMachineName,
@@ -416,8 +430,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final user = ApiService().currentUser;
     final repName =
         (user?.distributorName != null && user!.distributorName!.isNotEmpty)
-        ? user.distributorName!
-        : (user?.representativeName ?? '');
+            ? user.distributorName!
+            : (user?.representativeName ?? '');
 
     showDialog(
       context: context,
@@ -476,9 +490,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(message),
-                    backgroundColor: success
-                        ? const Color(0xFF00FF88)
-                        : Colors.redAccent,
+                    backgroundColor:
+                        success ? const Color(0xFF00FF88) : Colors.redAccent,
                   ),
                 );
               },
@@ -558,7 +571,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         ),
                         DropdownMenuItem(
                           value: "V1",
-                          child: Text(AppStrings.of(context, 'sim_type_old_v1')),
+                          child:
+                              Text(AppStrings.of(context, 'sim_type_old_v1')),
                         ),
                       ],
                       onChanged: (val) {
@@ -642,8 +656,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _handleCategoryTap(Category cat) {
-    final opensNextLevel =
-        cat.children.isNotEmpty ||
+    final opensNextLevel = cat.children.isNotEmpty ||
         cat.entityType == 'category' ||
         cat.entityType == 'brand';
 
@@ -912,153 +925,169 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   child: _searchQuery.isNotEmpty
                       ? _buildSearchResults(context)
                       : _isPagedHierarchyLevel
-                      ? RefreshIndicator(
-                          color: const Color(0xFF00FF88),
-                          onRefresh: _resetPagedSubcategoriesAndLoad,
-                          child: GridView.builder(
-                            controller: _subcategoriesScrollController,
-                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            gridDelegate:
-                                const SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: 2,
-                                  crossAxisSpacing: 12,
-                                  mainAxisSpacing: 12,
-                                  childAspectRatio: 1.0,
-                                ),
-                            itemCount: _pagedSubcategories.length +
-                                ((_hasMorePagedSubcategories ||
-                                        _isLoadingPagedSubcategories)
-                                    ? 1
-                                    : 0),
-                            itemBuilder: (context, index) {
-                              if (index >= _pagedSubcategories.length) {
-                                return const Center(
-                                  child: CircularProgressIndicator(
-                                    color: Color(0xFF00FF88),
-                                  ),
-                                );
-                              }
-                              return _buildCategoryCard(
-                                _pagedSubcategories[index],
-                              );
-                            },
-                          ),
-                        )
-                      : RefreshIndicator(
-                          color: const Color(0xFF00FF88),
-                          onRefresh: () async {
-                            // Update User Info
-                            await ApiService().getUserInfo().then((_) {
-                              if (mounted) setState(() {});
-                            });
-
-                            setState(() {
-                              _searchQuery = ''; // Clear search on refresh
-                              _categoriesFuture = _loadCurrentCategories();
-                            });
-                            await _categoriesFuture;
-                          },
-                          child: FutureBuilder<List<Category>>(
-                            future: _categoriesFuture,
-                            builder: (context, snapshot) {
-                              if (snapshot.connectionState ==
-                                  ConnectionState.waiting) {
-                                return const Center(
-                                  child: CircularProgressIndicator(
-                                    color: Color(0xFF00FF88),
-                                  ),
-                                );
-                              }
-
-                              if (snapshot.hasError) {
-                                return Center(
-                                  child: SingleChildScrollView(
-                                    physics:
-                                        const AlwaysScrollableScrollPhysics(),
-                                    child: Text(
-                                      "Error: ${snapshot.error}",
-                                      style: const TextStyle(color: Colors.red),
-                                    ),
-                                  ),
-                                );
-                              }
-
-                              if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                                return Center(
-                                  child: SingleChildScrollView(
-                                    physics:
-                                        const AlwaysScrollableScrollPhysics(),
-                                    child: Container(
-                                      padding: const EdgeInsets.all(20),
-                                      child: Text(
-                                        AppStrings.of(context, 'no_categories'),
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              }
-
-                              // Filter categories based on _searchQuery if it's not empty
-                              final filteredCategories = snapshot.data!
-                                  .where(
-                                    (cat) => _categoryDisplayName(
-                                      cat,
-                                    ).toLowerCase().contains(
-                                      _searchQuery.toLowerCase(),
-                                    ),
-                                  )
-                                  .toList();
-
-                              if (filteredCategories.isEmpty &&
-                                  _searchQuery.isNotEmpty) {
-                                return Center(
-                                  child: SingleChildScrollView(
-                                    physics:
-                                        const AlwaysScrollableScrollPhysics(),
-                                    child: Container(
-                                      padding: const EdgeInsets.all(20),
-                                      child: Text(
-                                        AppStrings.of(
-                                          context,
-                                          'no_matching_categories',
-                                        ),
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              }
-
-                              return GridView.builder(
-                                padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  0,
-                                  16,
-                                  16,
-                                ),
+                          ? RefreshIndicator(
+                              color: const Color(0xFF00FF88),
+                              onRefresh: _resetPagedSubcategoriesAndLoad,
+                              child: GridView.builder(
+                                controller: _subcategoriesScrollController,
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 0, 16, 16),
                                 physics: const AlwaysScrollableScrollPhysics(),
                                 gridDelegate:
-                                    const SliverGridDelegateWithFixedCrossAxisCount(
-                                      crossAxisCount: 2,
+                                    SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: _responsiveGridCrossAxisCount(
+                                    MediaQuery.of(context).size.width,
+                                  ),
+                                  crossAxisSpacing: 12,
+                                  mainAxisSpacing: 12,
+                                  childAspectRatio:
+                                      _responsiveGridChildAspectRatio(
+                                    MediaQuery.of(context).size.width,
+                                  ),
+                                ),
+                                itemCount: _pagedSubcategories.length +
+                                    ((_hasMorePagedSubcategories ||
+                                            _isLoadingPagedSubcategories)
+                                        ? 1
+                                        : 0),
+                                itemBuilder: (context, index) {
+                                  if (index >= _pagedSubcategories.length) {
+                                    return const Center(
+                                      child: CircularProgressIndicator(
+                                        color: Color(0xFF00FF88),
+                                      ),
+                                    );
+                                  }
+                                  return _buildCategoryCard(
+                                    _pagedSubcategories[index],
+                                  );
+                                },
+                              ),
+                            )
+                          : RefreshIndicator(
+                              color: const Color(0xFF00FF88),
+                              onRefresh: () async {
+                                // Update User Info
+                                await ApiService().getUserInfo().then((_) {
+                                  if (mounted) setState(() {});
+                                });
+
+                                setState(() {
+                                  _searchQuery = ''; // Clear search on refresh
+                                  _categoriesFuture = _loadCurrentCategories();
+                                });
+                                await _categoriesFuture;
+                              },
+                              child: FutureBuilder<List<Category>>(
+                                future: _categoriesFuture,
+                                builder: (context, snapshot) {
+                                  if (snapshot.connectionState ==
+                                      ConnectionState.waiting) {
+                                    return const Center(
+                                      child: CircularProgressIndicator(
+                                        color: Color(0xFF00FF88),
+                                      ),
+                                    );
+                                  }
+
+                                  if (snapshot.hasError) {
+                                    return Center(
+                                      child: SingleChildScrollView(
+                                        physics:
+                                            const AlwaysScrollableScrollPhysics(),
+                                        child: Text(
+                                          "Error: ${snapshot.error}",
+                                          style: const TextStyle(
+                                              color: Colors.red),
+                                        ),
+                                      ),
+                                    );
+                                  }
+
+                                  if (!snapshot.hasData ||
+                                      snapshot.data!.isEmpty) {
+                                    return Center(
+                                      child: SingleChildScrollView(
+                                        physics:
+                                            const AlwaysScrollableScrollPhysics(),
+                                        child: Container(
+                                          padding: const EdgeInsets.all(20),
+                                          child: Text(
+                                            AppStrings.of(
+                                                context, 'no_categories'),
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }
+
+                                  // Filter categories based on _searchQuery if it's not empty
+                                  final filteredCategories = snapshot.data!
+                                      .where(
+                                        (cat) => _categoryDisplayName(
+                                          cat,
+                                        ).toLowerCase().contains(
+                                              _searchQuery.toLowerCase(),
+                                            ),
+                                      )
+                                      .toList();
+
+                                  if (filteredCategories.isEmpty &&
+                                      _searchQuery.isNotEmpty) {
+                                    return Center(
+                                      child: SingleChildScrollView(
+                                        physics:
+                                            const AlwaysScrollableScrollPhysics(),
+                                        child: Container(
+                                          padding: const EdgeInsets.all(20),
+                                          child: Text(
+                                            AppStrings.of(
+                                              context,
+                                              'no_matching_categories',
+                                            ),
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }
+
+                                  return GridView.builder(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      16,
+                                      0,
+                                      16,
+                                      16,
+                                    ),
+                                    physics:
+                                        const AlwaysScrollableScrollPhysics(),
+                                    gridDelegate:
+                                        SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount:
+                                          _responsiveGridCrossAxisCount(
+                                        MediaQuery.of(context).size.width,
+                                      ),
                                       crossAxisSpacing: 12,
                                       mainAxisSpacing: 12,
-                                      childAspectRatio: 1.0,
+                                      childAspectRatio:
+                                          _responsiveGridChildAspectRatio(
+                                        MediaQuery.of(context).size.width,
+                                      ),
                                     ),
-                                itemCount: filteredCategories.length,
-                                itemBuilder: (context, index) {
-                                  final cat = filteredCategories[index];
-                                  return _buildCategoryCard(cat);
+                                    itemCount: filteredCategories.length,
+                                    itemBuilder: (context, index) {
+                                      final cat = filteredCategories[index];
+                                      return _buildCategoryCard(cat);
+                                    },
+                                  );
                                 },
-                              );
-                            },
-                          ),
-                        ),
+                              ),
+                            ),
                 ),
               ],
             ),
@@ -1072,94 +1101,106 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     return GestureDetector(
       onTap: () => _handleCategoryTap(cat),
-      child: Container(
-        decoration: BoxDecoration(
-          color: const Color(0xFF1E1E1E),
-          borderRadius: BorderRadius.circular(16),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [const Color(0xFF252525), const Color(0xFF1A1A1A)],
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.3),
-              blurRadius: 8,
-              offset: const Offset(0, 4),
-            ),
-          ],
-          border: Border.all(color: Colors.white.withOpacity(0.05)),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (imageUrl.isNotEmpty)
-              Container(
-                height: 76,
-                width: 76,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 4,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 170;
+          final iconBoxSize = compact ? 60.0 : 76.0;
+          final iconSize = compact ? 22.0 : 26.0;
+          final titleFontSize = compact ? 13.0 : 14.0;
+          final spacing = compact ? 8.0 : 12.0;
+          final cardPadding = compact ? 10.0 : 14.0;
+
+          return Container(
+            padding: EdgeInsets.all(cardPadding),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E1E1E),
+              borderRadius: BorderRadius.circular(16),
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF252525), Color(0xFF1A1A1A)],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.3),
+                  blurRadius: 8,
+                  offset: const Offset(0, 4),
                 ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Image.network(
-                    imageUrl,
-                    fit: BoxFit.cover,
-                    alignment: Alignment.topCenter,
-                    errorBuilder: (context, error, stackTrace) {
-                      return Icon(
-                        cat.children.isNotEmpty
-                            ? Icons.folder_open
-                            : Icons.smartphone,
-                        size: 24,
-                        color: Colors.grey,
-                      );
-                    },
+              ],
+              border: Border.all(color: Colors.white.withOpacity(0.05)),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (imageUrl.isNotEmpty)
+                  Container(
+                    height: iconBoxSize,
+                    width: iconBoxSize,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(compact ? 14 : 16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.1),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(compact ? 10 : 12),
+                      child: Image.network(
+                        imageUrl,
+                        fit: BoxFit.cover,
+                        alignment: Alignment.topCenter,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Icon(
+                            cat.children.isNotEmpty
+                                ? Icons.folder_open
+                                : Icons.smartphone,
+                            size: iconSize,
+                            color: Colors.grey,
+                          );
+                        },
+                      ),
+                    ),
+                  )
+                else
+                  Container(
+                    height: iconBoxSize,
+                    width: iconBoxSize,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00FF88).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(compact ? 14 : 16),
+                    ),
+                    child: Icon(
+                      cat.children.isNotEmpty
+                          ? Icons.folder_open
+                          : Icons.smartphone,
+                      size: iconSize,
+                      color: const Color(0xFF00FF88),
+                    ),
+                  ),
+                SizedBox(height: spacing),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 12),
+                  child: Text(
+                    _categoryDisplayName(cat),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: titleFontSize,
+                      fontWeight: FontWeight.w600,
+                      height: 1.2,
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-              )
-            else
-              Container(
-                height: 76,
-                width: 76,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF00FF88).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Icon(
-                  cat.children.isNotEmpty
-                      ? Icons.folder_open
-                      : Icons.smartphone,
-                  size: 26,
-                  color: const Color(0xFF00FF88),
-                ),
-              ),
-            const SizedBox(height: 12),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12.0),
-              child: Text(
-                _categoryDisplayName(cat),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  height: 1.2,
-                ),
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
+              ],
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -1193,11 +1234,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
             SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               sliver: SliverGrid(
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: _responsiveGridCrossAxisCount(
+                    MediaQuery.of(context).size.width,
+                  ),
                   crossAxisSpacing: 12,
                   mainAxisSpacing: 12,
-                  childAspectRatio: 1.0,
+                  childAspectRatio: _responsiveGridChildAspectRatio(
+                    MediaQuery.of(context).size.width,
+                  ),
                 ),
                 delegate: SliverChildBuilderDelegate((context, index) {
                   return _buildCategoryCard(matchingCategories[index]);
@@ -1246,9 +1291,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
             SliverList(
               delegate: SliverChildBuilderDelegate((context, index) {
                 final product = _productSearchResults[index];
-                final productImageUrl = ApiService().normalizeUrl(product.image);
                 return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                   child: Card(
                     color: const Color(0xFF1E1E1E),
                     shape: RoundedRectangleBorder(
@@ -1263,17 +1308,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: Image.network(
-                          productImageUrl,
+                        child: ProductThumbnail(
+                          productId: product.id,
+                          primaryImageUrl: product.image,
                           fit: BoxFit.contain,
-                          errorBuilder: (c, e, s) => const Icon(
-                            Icons.smartphone,
-                            color: Colors.grey,
-                          ),
+                          fallbackIcon: Icons.smartphone,
                         ),
                       ),
                       title: Text(
-                        product.nameEn.isNotEmpty ? product.nameEn : product.nameAr,
+                        product.nameEn.isNotEmpty
+                            ? product.nameEn
+                            : product.nameAr,
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
@@ -1281,7 +1326,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                       subtitle: Text(
                         AppStrings.of(context, 'product_label'),
-                        style: const TextStyle(color: Colors.grey, fontSize: 12),
+                        style:
+                            const TextStyle(color: Colors.grey, fontSize: 12),
                       ),
                       onTap: () => _openProduct(product),
                     ),
@@ -1327,11 +1373,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
               SliverPadding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 sliver: SliverGrid(
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: _responsiveGridCrossAxisCount(
+                      MediaQuery.of(context).size.width,
+                    ),
                     crossAxisSpacing: 12,
                     mainAxisSpacing: 12,
-                    childAspectRatio: 1.0,
+                    childAspectRatio: _responsiveGridChildAspectRatio(
+                      MediaQuery.of(context).size.width,
+                    ),
                   ),
                   delegate: SliverChildBuilderDelegate((context, index) {
                     return _buildCategoryCard(matchingCategories[index]);
@@ -1380,9 +1430,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               SliverList(
                 delegate: SliverChildBuilderDelegate((context, index) {
                   final product = _productSearchResults[index];
-                  final productImageUrl = ApiService().normalizeUrl(
-                    product.image,
-                  );
                   return Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 16,
@@ -1402,13 +1449,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(8),
                           ),
-                          child: Image.network(
-                            productImageUrl,
+                          child: ProductThumbnail(
+                            productId: product.id,
+                            primaryImageUrl: product.image,
                             fit: BoxFit.contain,
-                            errorBuilder: (c, e, s) => const Icon(
-                              Icons.smartphone,
-                              color: Colors.grey,
-                            ),
+                            fallbackIcon: Icons.smartphone,
                           ),
                         ),
                         title: Text(
@@ -1443,4 +1488,3 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 }
-

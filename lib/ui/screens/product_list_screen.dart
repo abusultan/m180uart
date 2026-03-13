@@ -5,6 +5,7 @@ import '../../services/bluetooth_service.dart';
 import '../../data/models/product_models.dart';
 import '../../core/app_strings.dart';
 import 'device_detail_screen.dart';
+import '../widgets/product_thumbnail_widget.dart';
 
 class ProductListScreen extends StatefulWidget {
   final Category category;
@@ -33,8 +34,8 @@ class _ProductListScreenState extends State<ProductListScreen> {
     if (_isOpeningProduct) return;
     _isOpeningProduct = true;
     try {
-      final typeMachineName = await CutterBluetoothService()
-          .getTypeMachineNameForItems();
+      final typeMachineName =
+          await CutterBluetoothService().getTypeMachineNameForItems();
       final items = await ApiService().getProductItems(
         product.id,
         typeMachineName: typeMachineName,
@@ -123,8 +124,8 @@ class _ProductListScreenState extends State<ProductListScreen> {
 
     try {
       final query = _searchController.text.trim();
-      final typeMachineName = await CutterBluetoothService()
-          .getTypeMachineNameForItems();
+      final typeMachineName =
+          await CutterBluetoothService().getTypeMachineNameForItems();
       List<Product> newProducts;
 
       if (query.isNotEmpty) {
@@ -150,9 +151,8 @@ class _ProductListScreenState extends State<ProductListScreen> {
       if (newProducts.isEmpty) {
         _hasMore = false;
       } else {
-        final uniqueProducts = newProducts
-            .where((p) => _loadedProductIds.add(p.id))
-            .toList();
+        final uniqueProducts =
+            newProducts.where((p) => _loadedProductIds.add(p.id)).toList();
         _products.addAll(uniqueProducts);
         _page++;
       }
@@ -226,11 +226,18 @@ class _ProductListScreenState extends State<ProductListScreen> {
                 : LayoutBuilder(
                     builder: (context, constraints) {
                       final width = constraints.maxWidth;
-                      final crossAxisCount = width >= 1100
-                          ? 4
+                      final crossAxisCount = width >= 1300
+                          ? 5
+                          : width >= 980
+                              ? 4
+                              : width >= 700
+                                  ? 3
+                                  : 2;
+                      final childAspectRatio = width >= 980
+                          ? 1.05
                           : width >= 700
-                          ? 3
-                          : 2;
+                              ? 1.0
+                              : 0.95;
 
                       return NotificationListener<ScrollNotification>(
                         onNotification: (notification) {
@@ -241,11 +248,12 @@ class _ProductListScreenState extends State<ProductListScreen> {
                           controller: _scrollController,
                           padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                           itemCount: _products.length + (_hasMore ? 1 : 0),
-                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
                             crossAxisCount: crossAxisCount,
                             crossAxisSpacing: 12,
                             mainAxisSpacing: 12,
-                            childAspectRatio: 0.95,
+                            childAspectRatio: childAspectRatio,
                           ),
                           itemBuilder: (context, index) {
                             if (index == _products.length) {
@@ -260,14 +268,8 @@ class _ProductListScreenState extends State<ProductListScreen> {
                             }
 
                             final product = _products[index];
-                            final productImageUrl = ApiService().normalizeUrl(
-                              product.image.isNotEmpty
-                                  ? product.image
-                                  : widget.category.imageUrl,
-                            );
-                            final categoryImageUrl = ApiService().normalizeUrl(
-                              widget.category.imageUrl,
-                            );
+                            final productImageUrl = product.image;
+                            final categoryImageUrl = widget.category.imageUrl;
                             return Card(
                               color: const Color(0xFF1E1E1E),
                               shape: RoundedRectangleBorder(
@@ -277,7 +279,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
                                 onTap: () => _openProduct(product),
                                 borderRadius: BorderRadius.circular(12),
                                 child: Padding(
-                                  padding: const EdgeInsets.all(10),
+                                  padding: EdgeInsets.all(
+                                    width >= 980 ? 8 : 10,
+                                  ),
                                   child: Column(
                                     children: [
                                       Expanded(
@@ -285,44 +289,30 @@ class _ProductListScreenState extends State<ProductListScreen> {
                                           width: double.infinity,
                                           decoration: BoxDecoration(
                                             color: Colors.white,
-                                            borderRadius: BorderRadius.circular(10),
+                                            borderRadius:
+                                                BorderRadius.circular(10),
                                           ),
-                                          padding: const EdgeInsets.all(8),
-                                          child: Image.network(
-                                            productImageUrl,
+                                          padding: EdgeInsets.all(
+                                            width >= 980 ? 6 : 8,
+                                          ),
+                                          child: ProductThumbnail(
+                                            productId: product.id,
+                                            primaryImageUrl: productImageUrl,
+                                            fallbackImageUrl: categoryImageUrl,
                                             fit: BoxFit.contain,
-                                            errorBuilder:
-                                                (context, error, stackTrace) {
-                                                  if (product.image.isNotEmpty &&
-                                                      categoryImageUrl.isNotEmpty) {
-                                                    return Image.network(
-                                                      categoryImageUrl,
-                                                      fit: BoxFit.contain,
-                                                      errorBuilder:
-                                                          (context, error, stackTrace) =>
-                                                              const Icon(
-                                                                Icons.image,
-                                                                color: Colors.grey,
-                                                              ),
-                                                    );
-                                                  }
-                                                  return const Icon(
-                                                    Icons.image,
-                                                    color: Colors.grey,
-                                                  );
-                                                },
+                                            fallbackIcon: Icons.image,
                                           ),
                                         ),
                                       ),
-                                      const SizedBox(height: 8),
+                                      SizedBox(height: width >= 980 ? 6 : 8),
                                       Text(
                                         product.nameEn.isNotEmpty
                                             ? product.nameEn
                                             : product.nameAr,
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           color: Colors.white,
                                           fontWeight: FontWeight.bold,
-                                          fontSize: 13,
+                                          fontSize: width >= 980 ? 12 : 13,
                                         ),
                                         maxLines: 2,
                                         overflow: TextOverflow.ellipsis,
@@ -344,4 +334,3 @@ class _ProductListScreenState extends State<ProductListScreen> {
     );
   }
 }
-

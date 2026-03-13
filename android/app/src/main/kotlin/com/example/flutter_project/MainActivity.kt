@@ -11,6 +11,8 @@ import android.os.Handler
 import android.os.Build
 import android.os.Bundle
 import android.net.NetworkCapabilities
+import android.net.Network
+import android.net.NetworkRequest
 import android.net.ConnectivityManager
 import android.net.wifi.WifiManager
 import android.net.Uri
@@ -29,6 +31,7 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.Executors
+import kotlin.system.exitProcess
 
 class MainActivity : FlutterActivity() {
     private val channelName = "svg_renderer"
@@ -38,12 +41,26 @@ class MainActivity : FlutterActivity() {
     private val serialManager = SerialPortManager()
     private val serialExecutor = Executors.newSingleThreadExecutor()
     private var wifiReturnReceiver: BroadcastReceiver? = null
+    private var wifiReturnNetworkCallback: ConnectivityManager.NetworkCallback? = null
     private var wifiReturnTimeout: Runnable? = null
     private var wifiReturnPoller: Runnable? = null
+    private var wifiReturnBringToFront: Runnable? = null
     private val wifiHandler = Handler(Looper.getMainLooper())
+    private var wifiReturnActive = false
     private var wifiReturnInitialConnected = false
     private var wifiReturnInitialSsid: String? = null
+    private var wifiReturnInitialNetworkId: String? = null
+    private var wifiReturnSawDisconnect = false
+    private var wifiReturnAttemptsRemaining = 0
+    private var activityResumed = false
     private var launcherEnsurePosted = false
+
+    data class RootCommandResult(
+        val success: Boolean,
+        val exitCode: Int,
+        val output: String,
+        val suPath: String?,
+    )
 
     private fun decodeSvg(bytes: ByteArray): String {
         if (bytes.size >= 2) {
@@ -98,7 +115,18 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun getActiveNetworkId(): String? {
+        return try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val network = cm.activeNetwork ?: return null
+            network.toString()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun cleanupWifiAutoReturn() {
+        wifiReturnActive = false
         try {
             if (wifiReturnReceiver != null) {
                 unregisterReceiver(wifiReturnReceiver)
@@ -106,6 +134,14 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {
         }
         wifiReturnReceiver = null
+        try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            if (wifiReturnNetworkCallback != null) {
+                cm.unregisterNetworkCallback(wifiReturnNetworkCallback!!)
+            }
+        } catch (_: Exception) {
+        }
+        wifiReturnNetworkCallback = null
         if (wifiReturnTimeout != null) {
             wifiHandler.removeCallbacks(wifiReturnTimeout!!)
         }
@@ -114,13 +150,86 @@ class MainActivity : FlutterActivity() {
             wifiHandler.removeCallbacks(wifiReturnPoller!!)
         }
         wifiReturnPoller = null
+        if (wifiReturnBringToFront != null) {
+            wifiHandler.removeCallbacks(wifiReturnBringToFront!!)
+        }
+        wifiReturnBringToFront = null
+        wifiReturnInitialNetworkId = null
+        wifiReturnSawDisconnect = false
+        wifiReturnAttemptsRemaining = 0
     }
 
     private fun returnToApp() {
-        val launch = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val launch = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+            )
+        } ?: Intent(this, MainActivity::class.java).apply {
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+            )
         }
         startActivity(launch)
+    }
+
+    private fun scheduleReturnToAppAttempts() {
+        if (!wifiReturnActive) return
+        if (wifiReturnBringToFront != null) {
+            wifiHandler.removeCallbacks(wifiReturnBringToFront!!)
+        }
+        wifiReturnAttemptsRemaining = 6
+        val runner = object : Runnable {
+            override fun run() {
+                if (!wifiReturnActive || activityResumed || wifiReturnAttemptsRemaining <= 0) {
+                    wifiReturnBringToFront = null
+                    return
+                }
+                wifiReturnAttemptsRemaining -= 1
+                returnToApp()
+                if (!activityResumed && wifiReturnAttemptsRemaining > 0) {
+                    wifiHandler.postDelayed(this, if (wifiReturnAttemptsRemaining >= 3) 500L else 1200L)
+                } else {
+                    wifiReturnBringToFront = null
+                }
+            }
+        }
+        wifiReturnBringToFront = runner
+        wifiHandler.post(runner)
+    }
+
+    private fun evaluateWifiAutoReturn(trigger: String) {
+        if (!wifiReturnActive) return
+
+        val connected = isNetworkConnected()
+        val ssid = getWifiSsid()
+        val networkId = getActiveNetworkId()
+
+        if (!connected) {
+            wifiReturnSawDisconnect = true
+            return
+        }
+
+        val becameConnected = !wifiReturnInitialConnected && connected
+        val ssidChanged =
+            wifiReturnInitialSsid != null &&
+                ssid != null &&
+                ssid.isNotBlank() &&
+                ssid != wifiReturnInitialSsid
+        val networkChanged =
+            wifiReturnInitialNetworkId != null &&
+                networkId != null &&
+                networkId != wifiReturnInitialNetworkId
+        val reconnected = wifiReturnSawDisconnect && connected
+
+        if (becameConnected || ssidChanged || networkChanged || reconnected) {
+            scheduleReturnToAppAttempts()
+        }
     }
 
     private fun buildHomeIntent(): Intent {
@@ -244,22 +353,63 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun installApkInternal(path: String): Boolean {
+    private fun stageApkForPackageInstaller(path: String): File {
         val apkFile = File(path)
         if (!apkFile.exists()) {
             throw IllegalArgumentException("APK not found: $path")
         }
 
+        val targetDir = File(externalCacheDir ?: cacheDir, "installer_apk").apply {
+            mkdirs()
+        }
+        val stagedFile = File(targetDir, "update.apk")
+        if (apkFile.absolutePath != stagedFile.absolutePath) {
+            apkFile.inputStream().use { input ->
+                stagedFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+        }
+        stagedFile.setReadable(true, false)
+        return stagedFile
+    }
+
+    private fun installApkInternal(path: String): Boolean {
+        val stagedFile = stageApkForPackageInstaller(path)
         val apkUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            FileProvider.getUriForFile(this, "$packageName.fileprovider", apkFile)
+            FileProvider.getUriForFile(this, "$packageName.fileprovider", stagedFile)
         } else {
-            Uri.fromFile(apkFile)
+            Uri.fromFile(stagedFile)
+        }
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
+                data = apkUri
+                putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
+                putExtra(Intent.EXTRA_RETURN_RESULT, false)
+            }
+        } else {
+            Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(apkUri, "application/vnd.android.package-archive")
+            }
+        }.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                clipData = android.content.ClipData.newRawUri("apk", apkUri)
+            }
         }
 
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(apkUri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            packageManager.queryIntentActivities(intent, 0).forEach { resolveInfo ->
+                grantUriPermission(
+                    resolveInfo.activityInfo.packageName,
+                    apkUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+        }
+        packageManager.resolveActivity(intent, 0)?.activityInfo?.packageName?.let {
+            intent.setPackage(it)
         }
         startActivity(intent)
         return true
@@ -306,6 +456,21 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun getInstalledAppVersionInfoInternal(): Map<String, Any> {
+        val installedInfo = getInstalledPackageInfoSafe(packageName)
+        if (installedInfo == null) {
+            return mapOf(
+                "versionCode" to 0L,
+                "versionName" to ""
+            )
+        }
+
+        return mapOf(
+            "versionCode" to getVersionCode(installedInfo),
+            "versionName" to (installedInfo.versionName ?: "")
+        )
+    }
+
     private fun isApkNewerThanInstalledInternal(path: String): Boolean {
         val apkFile = File(path)
         if (!apkFile.exists()) {
@@ -324,87 +489,418 @@ class MainActivity : FlutterActivity() {
         return incomingVersionCode > installedVersionCode
     }
 
-    private fun runRootCommand(command: String): Boolean {
+    private fun runRootCommandDetailed(command: String): RootCommandResult {
         val candidates = arrayOf("/system/bin/su", "/system/xbin/su", "/su/bin/su", "su")
+        var lastOutput = ""
+        var lastExitCode = -1
         for (su in candidates) {
             try {
-                val process = Runtime.getRuntime().exec(su)
+                val process = ProcessBuilder(su)
+                    .redirectErrorStream(true)
+                    .start()
                 process.outputStream.use { out ->
-                    out.write(("sh -c '$command'\nexit\n").toByteArray())
+                    out.write((command + "\nexit\n").toByteArray())
                     out.flush()
                 }
+                val output = process.inputStream.bufferedReader().use { it.readText() }.trim()
                 val code = process.waitFor()
-                if (code == 0) return true
+                if (code == 0) {
+                    return RootCommandResult(
+                        success = true,
+                        exitCode = code,
+                        output = output,
+                        suPath = su,
+                    )
+                }
+                lastExitCode = code
+                if (output.isNotBlank()) {
+                    lastOutput = output
+                }
             } catch (_: Exception) {
                 // Try next su candidate.
             }
         }
-        return false
+        return RootCommandResult(
+            success = false,
+            exitCode = lastExitCode,
+            output = lastOutput,
+            suPath = null,
+        )
     }
 
-    private fun installApkSilentlyInternal(path: String): Boolean {
+    private fun runRootCommand(command: String): Boolean {
+        return runRootCommandDetailed(command).success
+    }
+
+    private fun shellEscape(value: String): String {
+        return value.replace("'", "'\"'\"'")
+    }
+
+    private fun getAppRootShellCapabilityInternal(): Map<String, Any?> {
+        val candidates = arrayOf("/system/bin/su", "/system/xbin/su", "/su/bin/su")
+        val reasons = mutableListOf<String>()
+
+        for (su in candidates) {
+            val suFile = File(su)
+            if (!suFile.exists()) {
+                continue
+            }
+            if (suFile.canExecute()) {
+                return mapOf(
+                    "available" to true,
+                    "path" to su,
+                    "reason" to "",
+                )
+            }
+            reasons.add("$su exists but is not executable for the app process")
+        }
+
+        return mapOf(
+            "available" to false,
+            "path" to "",
+            "reason" to (
+                if (reasons.isNotEmpty()) {
+                    reasons.joinToString("; ")
+                } else {
+                    "No executable su binary is available for the app process."
+                }
+            ),
+        )
+    }
+
+    private fun stageApkForSilentInstall(path: String): String {
+        val stagedPath = "/data/local/tmp/${packageName.replace('.', '_')}_update.apk"
+        val escapedSource = shellEscape(path)
+        val escapedDest = shellEscape(stagedPath)
+
+        val staged = runRootCommand(
+            "cp '$escapedSource' '$escapedDest' >/dev/null 2>&1 && chmod 0644 '$escapedDest'"
+        )
+        return if (staged) stagedPath else path
+    }
+
+    private fun summarizeInstallOutput(output: String): String {
+        if (output.isBlank()) return ""
+        val lines = output
+            .lines()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+
+        val interesting = lines.firstOrNull {
+            it.contains("INSTALL_", ignoreCase = true) ||
+                it.contains("Failure", ignoreCase = true) ||
+                it.contains("Permission denied", ignoreCase = true) ||
+                it.contains("not allowed", ignoreCase = true) ||
+                it.contains("Unknown option", ignoreCase = true) ||
+                it.contains("unknown option", ignoreCase = true) ||
+                it.contains("Error", ignoreCase = true)
+        }
+        return (interesting ?: lines.lastOrNull().orEmpty())
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    private fun startDetachedSelfUpdate(
+        installSourcePath: String,
+        pmFlags: List<String>,
+    ): RootCommandResult {
+        val logPath = "/data/local/tmp/${packageName.replace('.', '_')}_silent_update.log"
+        val escapedLogPath = shellEscape(logPath)
+        val escapedApkPath = shellEscape(installSourcePath)
+        val escapedPackage = shellEscape(packageName)
+        val escapedComponent = shellEscape("$packageName/.MainActivity")
+        val pmArgs = pmFlags.joinToString(" ")
+        val cmdInstallBlock = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            """
+            elif cmd package install $pmArgs "${'$'}APK"; then
+              rc=0
+            """.trimIndent()
+        } else {
+            ""
+        }
+
+        val command =
+            """
+            LOG='$escapedLogPath'
+            APK='$escapedApkPath'
+            PKG='$escapedPackage'
+            COMPONENT='$escapedComponent'
+            sleep 2
+            am force-stop "${'$'}PKG" >/dev/null 2>&1 || true
+            pid=$(pidof "${'$'}PKG" 2>/dev/null | awk '{print $1}')
+            [ -n "${'$'}pid" ] && kill -9 "${'$'}pid" >/dev/null 2>&1 || true
+
+            if pm install $pmArgs "${'$'}APK" > "${'$'}LOG" 2>&1; then
+              rc=0
+            elif pm install $pmArgs --user 0 "${'$'}APK" >> "${'$'}LOG" 2>&1; then
+              rc=0
+            $cmdInstallBlock
+            else
+              session_id=$(cmd package install-create $pmArgs 2>>"${'$'}LOG" | sed -n 's/.*\[\(.*\)\].*/\1/p' | tail -n 1)
+              if [ -n "${'$'}session_id" ]; then
+                apk_size=$(wc -c < "${'$'}APK")
+                if cmd package install-write -S "${'$'}apk_size" "${'$'}session_id" base.apk "${'$'}APK" >> "${'$'}LOG" 2>&1 &&
+                  cmd package install-commit "${'$'}session_id" >> "${'$'}LOG" 2>&1; then
+                  rc=0
+                else
+                  rc=1
+                fi
+              else
+                rc=1
+              fi
+            fi
+
+            echo "RC=${'$'}rc" >> "${'$'}LOG"
+            if [ "${'$'}rc" -eq 0 ]; then
+              rm -f "${'$'}APK" >/dev/null 2>&1 || true
+              am start -n "${'$'}COMPONENT" >> "${'$'}LOG" 2>&1 ||
+                monkey -p "${'$'}PKG" -c android.intent.category.LAUNCHER 1 >> "${'$'}LOG" 2>&1 ||
+                true
+            fi
+            exit "${'$'}rc"
+            """.trimIndent()
+
+        val candidates = arrayOf("/system/bin/su", "/system/xbin/su", "/su/bin/su", "su")
+        val skipped = mutableListOf<String>()
+        for (su in candidates) {
+            try {
+                if (su != "su") {
+                    val suFile = File(su)
+                    if (!suFile.exists()) {
+                        skipped.add("$su not found")
+                        continue
+                    }
+                    if (!suFile.canExecute()) {
+                        skipped.add("$su exists but is not executable for the app process")
+                        continue
+                    }
+                }
+                val process = ProcessBuilder(su)
+                    .redirectErrorStream(true)
+                    .start()
+                process.outputStream.use { out ->
+                    out.write((command + "\nexit\n").toByteArray())
+                    out.flush()
+                }
+                return RootCommandResult(
+                    success = true,
+                    exitCode = 0,
+                    output = "STARTED:$logPath",
+                    suPath = su,
+                )
+            } catch (_: Exception) {
+                // Try next su candidate.
+            }
+        }
+
+        return RootCommandResult(
+            success = false,
+            exitCode = -1,
+            output = if (skipped.isNotEmpty()) {
+                "Could not start root shell for background self-update. ${skipped.joinToString("; ")}"
+            } else {
+                "Could not start root shell for background self-update."
+            },
+            suPath = null,
+        )
+    }
+
+    private fun closeForBackgroundUpdateInternal(): Boolean {
+        wifiHandler.postDelayed({
+            try {
+                moveTaskToBack(true)
+            } catch (_: Exception) {
+            }
+            try {
+                finishAffinity()
+            } catch (_: Exception) {
+            }
+            try {
+                finishAndRemoveTask()
+            } catch (_: Exception) {
+            }
+            try {
+                android.os.Process.killProcess(android.os.Process.myPid())
+            } catch (_: Exception) {
+            }
+            try {
+                exitProcess(0)
+            } catch (_: Exception) {
+            }
+        }, 500L)
+        return true
+    }
+
+    private fun installApkSilentlyDetailedInternal(path: String): Map<String, Any?> {
         val apkFile = File(path)
         if (!apkFile.exists()) {
             throw IllegalArgumentException("APK not found: $path")
         }
 
-        val escapedPath = path.replace("\"", "\\\"")
+        val installSourcePath = stageApkForSilentInstall(path)
+        val escapedPath = installSourcePath.replace("\"", "\\\"")
         val pmFlags = mutableListOf("-r", "-d")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             pmFlags.add("-g")
         }
 
-        val commands = mutableListOf(
-            "pm install ${pmFlags.joinToString(" ")} \"$escapedPath\""
+        val attempts = mutableListOf<Map<String, Any?>>()
+        val detachedResult = startDetachedSelfUpdate(installSourcePath, pmFlags)
+        attempts.add(
+            mapOf(
+                "label" to "detached self-update",
+                "success" to detachedResult.success,
+                "exitCode" to detachedResult.exitCode,
+                "output" to summarizeInstallOutput(detachedResult.output),
+                "suPath" to detachedResult.suPath,
+            )
         )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            commands.add("cmd package install ${pmFlags.joinToString(" ")} \"$escapedPath\"")
+        if (detachedResult.success) {
+            return mapOf(
+                "success" to true,
+                "deferred" to true,
+                "message" to "Started background self-update via root installer.",
+                "command" to "detached self-update",
+                "exitCode" to detachedResult.exitCode,
+                "output" to summarizeInstallOutput(detachedResult.output),
+                "sourcePath" to installSourcePath,
+                "attempts" to attempts,
+            )
         }
 
-        for (command in commands) {
-            if (runRootCommand(command)) {
-                return true
+        val commands = mutableListOf(
+            "pm install" to "pm install ${pmFlags.joinToString(" ")} \"$escapedPath\"",
+            "pm install --user 0" to "pm install ${pmFlags.joinToString(" ")} --user 0 \"$escapedPath\""
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            commands.add(
+                "cmd package install" to
+                    "cmd package install ${pmFlags.joinToString(" ")} \"$escapedPath\""
+            )
+        }
+        commands.add(
+            "cmd package session install" to
+            """
+            session_id=$(
+              cmd package install-create ${pmFlags.joinToString(" ")} 2>/dev/null |
+              sed -n 's/.*\[\(.*\)\].*/\1/p' |
+              tail -n 1
+            )
+            [ -n "${'$'}session_id" ] || exit 1
+            apk_size=$(wc -c < "$escapedPath")
+            cmd package install-write -S "${'$'}apk_size" "${'$'}session_id" base.apk "$escapedPath" >/dev/null 2>&1 &&
+            cmd package install-commit "${'$'}session_id" >/dev/null 2>&1
+            """.trimIndent()
+        )
+
+        for ((label, command) in commands) {
+            val result = runRootCommandDetailed(command)
+            attempts.add(
+                mapOf(
+                    "label" to label,
+                    "success" to result.success,
+                    "exitCode" to result.exitCode,
+                    "output" to summarizeInstallOutput(result.output),
+                    "suPath" to result.suPath,
+                )
+            )
+            if (result.success) {
+                if (installSourcePath != path) {
+                    runRootCommand("rm -f \"${installSourcePath.replace("\"", "\\\"")}\" >/dev/null 2>&1 || true")
+                }
+                return mapOf(
+                    "success" to true,
+                    "deferred" to false,
+                    "message" to "Installed silently via $label.",
+                    "command" to label,
+                    "exitCode" to result.exitCode,
+                    "output" to summarizeInstallOutput(result.output),
+                    "sourcePath" to installSourcePath,
+                    "attempts" to attempts,
+                )
             }
         }
-        return false
+
+        if (installSourcePath != path) {
+            runRootCommand("rm -f \"${installSourcePath.replace("\"", "\\\"")}\" >/dev/null 2>&1 || true")
+        }
+        val lastAttempt = attempts.lastOrNull()
+        val bestOutput = attempts
+            .mapNotNull { it["output"]?.toString()?.trim() }
+            .firstOrNull { it.isNotEmpty() }
+            ?: "Silent install command failed with no package-manager output."
+        return mapOf(
+            "success" to false,
+            "deferred" to false,
+            "message" to bestOutput,
+            "command" to (lastAttempt?.get("label")?.toString() ?: ""),
+            "exitCode" to (lastAttempt?.get("exitCode") ?: -1),
+            "output" to bestOutput,
+            "sourcePath" to installSourcePath,
+            "attempts" to attempts,
+        )
+    }
+
+    private fun installApkSilentlyInternal(path: String): Boolean {
+        val detailed = installApkSilentlyDetailedInternal(path)
+        return detailed["success"] == true
     }
 
     private fun setupWifiAutoReturn(timeoutSeconds: Int) {
         cleanupWifiAutoReturn()
+        wifiReturnActive = true
         wifiReturnInitialConnected = isNetworkConnected()
         wifiReturnInitialSsid = getWifiSsid()
+        wifiReturnInitialNetworkId = getActiveNetworkId()
+        wifiReturnSawDisconnect = false
 
         wifiReturnReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
-                val connected = isNetworkConnected()
-                val ssid = getWifiSsid()
-                val wifiChanged = ssid != null && ssid != wifiReturnInitialSsid
-                if (wifiReturnInitialConnected && !connected) {
-                    wifiReturnInitialConnected = false
-                    return
-                }
-                if ((!wifiReturnInitialConnected && connected) || wifiChanged) {
-                    cleanupWifiAutoReturn()
-                    returnToApp()
-                }
+                evaluateWifiAutoReturn(intent.action ?: "broadcast")
             }
         }
-        registerReceiver(wifiReturnReceiver, IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION))
+        val filter = IntentFilter().apply {
+            addAction(ConnectivityManager.CONNECTIVITY_ACTION)
+            addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION)
+            addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
+            addAction(WifiManager.SUPPLICANT_STATE_CHANGED_ACTION)
+        }
+        registerReceiver(wifiReturnReceiver, filter)
+
+        try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val request = NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                .build()
+            wifiReturnNetworkCallback = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    evaluateWifiAutoReturn("network_available")
+                }
+
+                override fun onCapabilitiesChanged(
+                    network: Network,
+                    networkCapabilities: NetworkCapabilities,
+                ) {
+                    evaluateWifiAutoReturn("network_capabilities")
+                }
+
+                override fun onLost(network: Network) {
+                    wifiReturnSawDisconnect = true
+                }
+            }
+            cm.registerNetworkCallback(request, wifiReturnNetworkCallback!!)
+        } catch (_: Exception) {
+        }
 
         wifiReturnPoller = object : Runnable {
             override fun run() {
-                val connected = isNetworkConnected()
-                val ssid = getWifiSsid()
-                val wifiChanged = ssid != null && ssid != wifiReturnInitialSsid
-                if ((!wifiReturnInitialConnected && connected) || wifiChanged) {
-                    cleanupWifiAutoReturn()
-                    returnToApp()
-                    return
+                evaluateWifiAutoReturn("poll")
+                if (wifiReturnActive) {
+                    wifiHandler.postDelayed(this, 1000L)
                 }
-                wifiHandler.postDelayed(this, 1500L)
             }
         }
-        wifiHandler.postDelayed(wifiReturnPoller!!, 1500L)
+        wifiHandler.postDelayed(wifiReturnPoller!!, 1000L)
 
         wifiReturnTimeout = Runnable {
             cleanupWifiAutoReturn()
@@ -416,6 +912,19 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ensureLauncherDefaultOnStartup()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        activityResumed = true
+        if (wifiReturnActive) {
+            cleanupWifiAutoReturn()
+        }
+    }
+
+    override fun onPause() {
+        activityResumed = false
+        super.onPause()
     }
 
 
@@ -561,9 +1070,28 @@ class MainActivity : FlutterActivity() {
                             } else {
                                 cleanupWifiAutoReturn()
                             }
-                            val intent = Intent(Settings.ACTION_WIFI_SETTINGS)
-                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            startActivity(intent)
+                            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                Intent(Settings.Panel.ACTION_INTERNET_CONNECTIVITY)
+                            } else {
+                                Intent(Settings.ACTION_WIFI_SETTINGS)
+                            }.apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            try {
+                                startActivity(intent)
+                            } catch (_: Exception) {
+                                val fallbackIntent = Intent(Settings.ACTION_WIFI_SETTINGS).apply {
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                try {
+                                    startActivity(fallbackIntent)
+                                } catch (_: Exception) {
+                                    val secondFallback = Intent(Settings.ACTION_WIRELESS_SETTINGS).apply {
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    startActivity(secondFallback)
+                                }
+                            }
                             result.success(true)
                         } catch (e: Exception) {
                             result.error("wifi_settings_failed", e.message, null)
@@ -571,6 +1099,9 @@ class MainActivity : FlutterActivity() {
                     }
                     "canInstallPackages" -> {
                         result.success(canInstallPackagesNow())
+                    }
+                    "getRootShellCapability" -> {
+                        result.success(getAppRootShellCapabilityInternal())
                     }
                     "openInstallUnknownSourcesSettings" -> {
                         result.success(openUnknownSourcesSettingsInternal())
@@ -599,6 +1130,18 @@ class MainActivity : FlutterActivity() {
                             result.error("install_apk_silent_failed", e.message, null)
                         }
                     }
+                    "installApkSilentlyDetailed" -> {
+                        val pathArg = call.argument<String>("path")
+                        if (pathArg.isNullOrBlank()) {
+                            result.error("install_apk_silent_failed", "path is empty", null)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            result.success(installApkSilentlyDetailedInternal(pathArg))
+                        } catch (e: Exception) {
+                            result.error("install_apk_silent_failed", e.message, null)
+                        }
+                    }
                     "isApkNewerThanInstalled" -> {
                         val pathArg = call.argument<String>("path")
                         if (pathArg.isNullOrBlank()) {
@@ -609,6 +1152,20 @@ class MainActivity : FlutterActivity() {
                             result.success(isApkNewerThanInstalledInternal(pathArg))
                         } catch (e: Exception) {
                             result.error("apk_version_check_failed", e.message, null)
+                        }
+                    }
+                    "getInstalledAppVersionInfo" -> {
+                        try {
+                            result.success(getInstalledAppVersionInfoInternal())
+                        } catch (e: Exception) {
+                            result.error("installed_version_failed", e.message, null)
+                        }
+                    }
+                    "closeForBackgroundUpdate" -> {
+                        try {
+                            result.success(closeForBackgroundUpdateInternal())
+                        } catch (e: Exception) {
+                            result.error("close_for_update_failed", e.message, null)
                         }
                     }
                     else -> result.notImplemented()

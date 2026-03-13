@@ -33,6 +33,8 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   CutPathData? _previewData;
   bool _previewLoading = false;
   bool _previewFailed = false;
+  String? _previewVisualUrl;
+  bool _previewVisualIsSvg = false;
   bool _isCutting = false;
   bool _isDownloading = false;
   String _status = "";
@@ -80,6 +82,8 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         _previewLoading = true;
         _previewFailed = false;
         _previewData = null;
+        _previewVisualUrl = null;
+        _previewVisualIsSvg = false;
       });
     }
 
@@ -121,6 +125,15 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
 
       _cutFile = file;
       final bytes = await file.readAsBytes();
+      if (_looksLikeSvgUrl(url) || _looksLikeSvgBytes(bytes)) {
+        if (!mounted) return;
+        setState(() {
+          _previewVisualUrl = url;
+          _previewVisualIsSvg = true;
+          _previewLoading = false;
+        });
+        return;
+      }
       final data = CutFileTransformer.decodePathData(bytes);
 
       if (!mounted) return;
@@ -141,6 +154,8 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
           : rotated;
 
       setState(() {
+        _previewVisualUrl = null;
+        _previewVisualIsSvg = false;
         _previewData = processed;
         _previewLoading = false;
       });
@@ -165,8 +180,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   bool get _isMirroredMachine {
     final serial = _bluetooth.serialNumber?.toUpperCase() ?? '';
     final agent = _bluetooth.cachedAgentType?.toUpperCase() ?? '';
-    bool isException =
-        serial.startsWith("DQ") ||
+    bool isException = serial.startsWith("DQ") ||
         serial.startsWith("DX") ||
         serial.startsWith("LH") ||
         serial.startsWith("DH") ||
@@ -197,17 +211,21 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       );
     }
 
-    String imageUrl = widget.productItem?.imageUrl ?? '';
+    String imageUrl =
+        _previewVisualUrl ?? widget.productItem?.preferredPreviewUrl ?? '';
 
     if (imageUrl.isNotEmpty) {
-      final isCutLine = imageUrl.toLowerCase().contains('.svg');
+      final isSvg = _previewVisualIsSvg || _looksLikeSvgUrl(imageUrl);
       final normalizedUrl = ApiService().normalizeUrl(imageUrl);
       return Stack(
         children: [
           const Positioned.fill(child: ColoredBox(color: Colors.white)),
           Positioned.fill(
-            child: isCutLine
-                ? SvgRenderer(url: imageUrl, isCutLine: true)
+            child: isSvg
+                ? SvgRenderer(
+                    url: normalizedUrl,
+                    isCutLine: true,
+                  )
                 : Image.network(
                     normalizedUrl,
                     fit: BoxFit.contain,
@@ -234,6 +252,24 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     return const Center(
       child: Icon(Icons.image_not_supported, color: Colors.grey, size: 50),
     );
+  }
+
+  bool _looksLikeSvgUrl(String value) {
+    final lower = value.trim().toLowerCase();
+    return lower.contains('.svg') ||
+        lower.contains('image/svg') ||
+        lower.contains('/svg');
+  }
+
+  bool _looksLikeSvgBytes(List<int> bytes) {
+    if (bytes.isEmpty) return false;
+    try {
+      final sample = String.fromCharCodes(bytes.take(200));
+      final lower = sample.toLowerCase();
+      return lower.contains('<svg') || lower.contains('<?xml');
+    } catch (_) {
+      return false;
+    }
   }
 
   Positioned _buildAngleBadge() {
@@ -335,8 +371,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         cutterId: cutterIdForDecrement,
       );
       if (decrementResult['success'] != true) {
-        final msg =
-            decrementResult['message']?.toString() ??
+        final msg = decrementResult['message']?.toString() ??
             AppStrings.of(context, 'error_not_enough_pieces');
         if (mounted) {
           setState(() {
@@ -452,11 +487,11 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    bool isConnected = _bluetooth.isConnected || _bluetooth.isBypassMode;
-    String name =
+    final isConnected = _bluetooth.isConnected || _bluetooth.isBypassMode;
+    final name =
         widget.productItem?.nameEn ?? AppStrings.of(context, 'unknown_product');
-    int remaining = ApiService().currentUser?.remainingPieces ?? 0;
-    bool hasBalance = remaining > 0;
+    final remaining = ApiService().currentUser?.remainingPieces ?? 0;
+    final hasBalance = remaining > 0;
 
     return Scaffold(
       appBar: AppBar(
@@ -464,65 +499,48 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         backgroundColor: Colors.transparent,
       ),
       backgroundColor: const Color(0xFF121212),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          children: [
-            AspectRatio(
-              aspectRatio: 1.2,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: Colors.black12),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(24),
-                  child: _buildPreview(),
-                ),
-              ),
-            ),
-            const SizedBox(height: 30),
-            Text(
-              name,
-              style: const TextStyle(
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final isLandscape = constraints.maxWidth > constraints.maxHeight;
+            final contentPadding = isLandscape ? 14.0 : 24.0;
+            final previewCard = Container(
+              decoration: BoxDecoration(
                 color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
+                borderRadius: BorderRadius.circular(isLandscape ? 20 : 24),
+                border: Border.all(color: Colors.black12),
               ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 10),
-            Text(
-              _status,
-              style: TextStyle(
-                color: isConnected ? Color(0xFF00FF88) : Colors.grey,
-                fontSize: 13,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(isLandscape ? 20 : 24),
+                child: _buildPreview(),
               ),
-            ),
-            const SizedBox(height: 60),
-            SizedBox(
+            );
+
+            final actionButton = SizedBox(
               width: double.infinity,
-              height: 56,
+              height: isLandscape ? 52 : 56,
               child: ElevatedButton(
                 onPressed:
                     _isCutting || _isDownloading || (!hasBalance && isConnected)
-                    ? null
-                    : () {
-                        if (isConnected)
-                          _startCut();
-                        else
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const ScanScreen(),
-                            ),
-                          ).then((_) => _checkConnection());
-                      },
+                        ? null
+                        : () {
+                            if (isConnected) {
+                              _startCut();
+                            } else {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const ScanScreen(),
+                                ),
+                              ).then((_) => _checkConnection());
+                            }
+                          },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: isConnected
-                      ? (hasBalance ? Color(0xFF00FF88) : const Color(0xFF666666))
-                      : Color(0xFF333333),
+                      ? (hasBalance
+                          ? const Color(0xFF00FF88)
+                          : const Color(0xFF666666))
+                      : const Color(0xFF333333),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
                   ),
@@ -532,8 +550,8 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                     : Text(
                         isConnected
                             ? (hasBalance
-                                  ? AppStrings.of(context, 'send_to_cutter')
-                                  : 'الرصيد صفر - لازم تشحن')
+                                ? AppStrings.of(context, 'send_to_cutter')
+                                : 'الرصيد صفر - لازم تشحن')
                             : AppStrings.of(context, 'connect_to_cutter'),
                         style: TextStyle(
                           color: isConnected && hasBalance
@@ -543,19 +561,97 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                         ),
                       ),
               ),
-            ),
-            if (isConnected)
-              Padding(
-                padding: const EdgeInsets.only(top: 15),
-                child: Text(
-                  '${AppStrings.of(context, 'remaining_pieces')}: $remaining',
+            );
+
+            final details = Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  name,
                   style: TextStyle(
-                    color: hasBalance ? Color(0xFF00FF88) : Colors.red,
-                    fontSize: 12,
+                    color: Colors.white,
+                    fontSize: isLandscape ? 18 : 20,
+                    fontWeight: FontWeight.bold,
                   ),
+                  textAlign: isLandscape ? TextAlign.start : TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
+                SizedBox(height: isLandscape ? 8 : 10),
+                Text(
+                  _status,
+                  style: TextStyle(
+                    color: isConnected ? const Color(0xFF00FF88) : Colors.grey,
+                    fontSize: isLandscape ? 12 : 13,
+                  ),
+                  textAlign: isLandscape ? TextAlign.start : TextAlign.center,
+                  maxLines: isLandscape ? 3 : 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const Spacer(),
+                actionButton,
+                if (isConnected)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Text(
+                      '${AppStrings.of(context, 'remaining_pieces')}: $remaining',
+                      style: TextStyle(
+                        color:
+                            hasBalance ? const Color(0xFF00FF88) : Colors.red,
+                        fontSize: 12,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+              ],
+            );
+
+            if (isLandscape) {
+              return Padding(
+                padding: EdgeInsets.all(contentPadding),
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: 6,
+                      child: Center(
+                        child: AspectRatio(
+                          aspectRatio: 1.18,
+                          child: previewCard,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      flex: 4,
+                      child: details,
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            return Padding(
+              padding: EdgeInsets.all(contentPadding),
+              child: Column(
+                children: [
+                  Expanded(
+                    flex: 7,
+                    child: Center(
+                      child: AspectRatio(
+                        aspectRatio: 1.15,
+                        child: previewCard,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Expanded(
+                    flex: 4,
+                    child: details,
+                  ),
+                ],
               ),
-          ],
+            );
+          },
         ),
       ),
     );

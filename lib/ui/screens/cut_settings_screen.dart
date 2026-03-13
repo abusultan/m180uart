@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter/services.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/cut_settings_service.dart';
 import '../../services/bluetooth_service.dart';
@@ -66,8 +65,7 @@ class CutSettingsScreen extends StatefulWidget {
 class _CutSettingsScreenState extends State<CutSettingsScreen> {
   static const String _handshakeAlgoKey = 'manual_handshake_algorithm_ui';
   static const String _forceLandscapeKey = 'force_landscape';
-  static const String _defaultUpdateUrl =
-      'https://anti-crash.com/update.apk';
+  static const String _defaultUpdateUrl = 'https://anti-crash.com/update.apk';
   static const String _sensitivePasswordKey = 'sensitive_settings_password';
   static const String _defaultSensitivePassword = '2580';
 
@@ -111,7 +109,8 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
     final autoFeed = await _settings.getAutoFeed();
     final angleEnabled = await _settings.getAngleEnabled();
     final angleValue = await _settings.getAngleValue();
-    final packageInfo = await PackageInfo.fromPlatform();
+    final installedVersionName = await _appSettings.getInstalledVersionName();
+    final installedVersionCode = await _appSettings.getInstalledVersionCode();
     final prefs = await SharedPreferences.getInstance();
     final savedAlgo = prefs.getString(_handshakeAlgoKey);
     final forceLandscape = prefs.getBool(_forceLandscapeKey) ?? false;
@@ -126,8 +125,14 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
       _autoFeed = autoFeed;
       _angleEnabled = angleEnabled;
       _angleValue = angleValue;
-      _appVersionLabel =
-          'Installed version: ${packageInfo.version} (${packageInfo.buildNumber})';
+      if ((installedVersionName ?? '').isNotEmpty &&
+          installedVersionCode != null &&
+          installedVersionCode > 0) {
+        _appVersionLabel =
+            'Installed version: $installedVersionName ($installedVersionCode)';
+      } else {
+        _appVersionLabel = '';
+      }
       _forceLandscape = forceLandscape;
       if (effectiveAlgo != null) {
         _manualHandshakeAlgorithm = effectiveAlgo;
@@ -338,12 +343,7 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
   }
 
   Future<int?> _getInstalledBuildNumber() async {
-    try {
-      final info = await PackageInfo.fromPlatform();
-      return _parsePositiveInt(info.buildNumber);
-    } catch (_) {
-      return null;
-    }
+    return _appSettings.getInstalledVersionCode();
   }
 
   Future<int?> _fetchServerBuildNumber(String apkUrl) async {
@@ -472,7 +472,33 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
         return;
       }
 
-      final installedSilently = await _appSettings.installApkSilently(apkPath);
+      final rootShell = await _appSettings.getRootShellCapability();
+      SilentInstallResult silentInstall = const SilentInstallResult(
+        success: false,
+        deferred: false,
+        message: '',
+        command: '',
+        exitCode: -1,
+        output: '',
+        sourcePath: '',
+        attempts: [],
+      );
+      var installReason = '';
+      var installedSilently = false;
+      if (rootShell.available) {
+        silentInstall = await _appSettings.installApkSilentlyDetailed(apkPath);
+        installReason = silentInstall.message.trim().isNotEmpty
+            ? silentInstall.message.trim()
+            : (silentInstall.output.trim().isNotEmpty
+                ? silentInstall.output.trim()
+                : 'Silent install failed.');
+        installedSilently = silentInstall.success;
+      }
+      if (!rootShell.available) {
+        installReason = rootShell.reason.trim().isNotEmpty
+            ? rootShell.reason.trim()
+            : 'This machine does not allow the app to open a root shell.';
+      }
       final openedInstaller =
           installedSilently ? false : await _appSettings.installApk(apkPath);
       if (!mounted) return;
@@ -480,17 +506,27 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
         SnackBar(
           content: Text(
             installedSilently
-                ? 'Update installed automatically.'
+                ? (silentInstall.deferred
+                    ? 'Automatic install started in background. The app should reopen on its own.'
+                    : 'Update installed automatically.')
                 : openedInstaller
-                    ? 'Automatic install failed. Opened package installer instead.'
-                    : 'Automatic install failed. Root/device-owner permission is required.',
+                    ? rootShell.available
+                        ? 'Automatic install failed: $installReason. Opened package installer instead.'
+                        : 'Opened package installer directly: $installReason'
+                    : rootShell.available
+                        ? 'Automatic install failed: $installReason'
+                        : 'Could not open package installer: $installReason',
           ),
-          backgroundColor:
-              installedSilently || openedInstaller
-                  ? const Color(0xFF00FF88)
-                  : Colors.red,
+          backgroundColor: installedSilently || openedInstaller
+              ? const Color(0xFF00FF88)
+              : Colors.red,
         ),
       );
+      if (installedSilently && silentInstall.deferred) {
+        Future<void>.delayed(const Duration(milliseconds: 900), () async {
+          await _appSettings.closeForBackgroundUpdate();
+        });
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
