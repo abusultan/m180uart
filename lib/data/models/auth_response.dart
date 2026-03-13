@@ -36,10 +36,12 @@ class User {
           json['representative'],
       distributorName:
           json['distributor_name'] ??
+          json['distributor'] ??
           json['dealer_name'] ??
           json['supplier_name'],
       representativeId:
           json['representative_id'] ??
+          json['distributor_id'] ??
           json['mandob_id'] ??
           json['rep_id'],
     );

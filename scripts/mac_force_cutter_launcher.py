@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -104,6 +106,55 @@ def detect_default_apk(project_root: Path, explicit_apk: str | None) -> Path:
             return candidate
 
     die("No APK found. Build the app first or pass --apk /path/to/file.apk")
+
+
+def _candidate_aapt_paths() -> list[Path]:
+    candidates: list[Path] = []
+
+    direct_env = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
+    if direct_env:
+        candidates.append(Path(direct_env))
+
+    candidates.append(Path.home() / "Library" / "Android" / "sdk")
+
+    aapt_paths: list[Path] = []
+    seen: set[Path] = set()
+    for sdk_root in candidates:
+        if not sdk_root.exists():
+            continue
+        build_tools_dir = sdk_root / "build-tools"
+        if not build_tools_dir.is_dir():
+            continue
+        for child in sorted(build_tools_dir.iterdir(), reverse=True):
+            aapt = child / "aapt"
+            if aapt.is_file() and aapt not in seen:
+                seen.add(aapt)
+                aapt_paths.append(aapt)
+    return aapt_paths
+
+
+def detect_apk_version(apk_path: Path) -> str | None:
+    version_name_re = re.compile(r"versionName='([^']+)'")
+    version_code_re = re.compile(r"versionCode='([^']+)'")
+
+    for aapt_path in _candidate_aapt_paths():
+        try:
+            output = run_command(
+                [str(aapt_path), "dump", "badging", str(apk_path)],
+                capture=True,
+            ).stdout
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            continue
+
+        version_name_match = version_name_re.search(output)
+        version_code_match = version_code_re.search(output)
+        if version_name_match and version_code_match:
+            return (
+                f"{version_name_match.group(1)}"
+                f" ({version_code_match.group(1)})"
+            )
+
+    return None
 
 
 def detect_device(explicit_device: str | None) -> str:
@@ -296,6 +347,9 @@ def main() -> None:
     require_root(device_serial)
 
     log(f"Device: {device_serial}")
+    apk_version = detect_apk_version(apk_path)
+    if apk_version:
+        log(f"APK version: {apk_version}")
     install_app(device_serial, apk_path, args.dry_run)
 
     removal_candidates: list[str] = []

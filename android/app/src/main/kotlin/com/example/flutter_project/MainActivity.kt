@@ -745,29 +745,6 @@ class MainActivity : FlutterActivity() {
         }
 
         val attempts = mutableListOf<Map<String, Any?>>()
-        val detachedResult = startDetachedSelfUpdate(installSourcePath, pmFlags)
-        attempts.add(
-            mapOf(
-                "label" to "detached self-update",
-                "success" to detachedResult.success,
-                "exitCode" to detachedResult.exitCode,
-                "output" to summarizeInstallOutput(detachedResult.output),
-                "suPath" to detachedResult.suPath,
-            )
-        )
-        if (detachedResult.success) {
-            return mapOf(
-                "success" to true,
-                "deferred" to true,
-                "message" to "Started background self-update via root installer.",
-                "command" to "detached self-update",
-                "exitCode" to detachedResult.exitCode,
-                "output" to summarizeInstallOutput(detachedResult.output),
-                "sourcePath" to installSourcePath,
-                "attempts" to attempts,
-            )
-        }
-
         val commands = mutableListOf(
             "pm install" to "pm install ${pmFlags.joinToString(" ")} \"$escapedPath\"",
             "pm install --user 0" to "pm install ${pmFlags.joinToString(" ")} --user 0 \"$escapedPath\""
@@ -795,16 +772,26 @@ class MainActivity : FlutterActivity() {
 
         for ((label, command) in commands) {
             val result = runRootCommandDetailed(command)
+            val installOutput = summarizeInstallOutput(result.output)
+            val installedVersionChanged =
+                result.success && !isApkNewerThanInstalledInternal(path)
+            val effectiveSuccess = result.success && installedVersionChanged
+            val effectiveOutput =
+                if (result.success && !installedVersionChanged) {
+                    "Package manager reported success, but installed version did not change."
+                } else {
+                    installOutput
+                }
             attempts.add(
                 mapOf(
                     "label" to label,
-                    "success" to result.success,
+                    "success" to effectiveSuccess,
                     "exitCode" to result.exitCode,
-                    "output" to summarizeInstallOutput(result.output),
+                    "output" to effectiveOutput,
                     "suPath" to result.suPath,
                 )
             )
-            if (result.success) {
+            if (effectiveSuccess) {
                 if (installSourcePath != path) {
                     runRootCommand("rm -f \"${installSourcePath.replace("\"", "\\\"")}\" >/dev/null 2>&1 || true")
                 }
@@ -814,11 +801,34 @@ class MainActivity : FlutterActivity() {
                     "message" to "Installed silently via $label.",
                     "command" to label,
                     "exitCode" to result.exitCode,
-                    "output" to summarizeInstallOutput(result.output),
+                    "output" to effectiveOutput,
                     "sourcePath" to installSourcePath,
                     "attempts" to attempts,
                 )
             }
+        }
+
+        val detachedResult = startDetachedSelfUpdate(installSourcePath, pmFlags)
+        attempts.add(
+            mapOf(
+                "label" to "detached self-update",
+                "success" to detachedResult.success,
+                "exitCode" to detachedResult.exitCode,
+                "output" to summarizeInstallOutput(detachedResult.output),
+                "suPath" to detachedResult.suPath,
+            )
+        )
+        if (detachedResult.success) {
+            return mapOf(
+                "success" to true,
+                "deferred" to true,
+                "message" to "Started background self-update via root installer.",
+                "command" to "detached self-update",
+                "exitCode" to detachedResult.exitCode,
+                "output" to summarizeInstallOutput(detachedResult.output),
+                "sourcePath" to installSourcePath,
+                "attempts" to attempts,
+            )
         }
 
         if (installSourcePath != path) {
@@ -1065,7 +1075,12 @@ class MainActivity : FlutterActivity() {
                         try {
                             val autoReturn = call.argument<Boolean>("autoReturn") ?: true
                             val timeoutSeconds = call.argument<Int>("timeoutSeconds") ?: 30
-                            if (autoReturn) {
+                            val supportsReliableWifiAutoReturn =
+                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                            val useAutoReturn =
+                                autoReturn && supportsReliableWifiAutoReturn
+
+                            if (useAutoReturn) {
                                 setupWifiAutoReturn(timeoutSeconds)
                             } else {
                                 cleanupWifiAutoReturn()
@@ -1074,21 +1089,15 @@ class MainActivity : FlutterActivity() {
                                 Intent(Settings.Panel.ACTION_INTERNET_CONNECTIVITY)
                             } else {
                                 Intent(Settings.ACTION_WIFI_SETTINGS)
-                            }.apply {
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             }
                             try {
                                 startActivity(intent)
                             } catch (_: Exception) {
-                                val fallbackIntent = Intent(Settings.ACTION_WIFI_SETTINGS).apply {
-                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                }
+                                val fallbackIntent = Intent(Settings.ACTION_WIFI_SETTINGS)
                                 try {
                                     startActivity(fallbackIntent)
                                 } catch (_: Exception) {
-                                    val secondFallback = Intent(Settings.ACTION_WIRELESS_SETTINGS).apply {
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    }
+                                    val secondFallback = Intent(Settings.ACTION_WIRELESS_SETTINGS)
                                     startActivity(secondFallback)
                                 }
                             }

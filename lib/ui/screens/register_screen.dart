@@ -66,16 +66,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Widget _buildRepresentativeDropdown() {
-    final List<Representative> list = _representatives.isEmpty
-        ? const [
-            Representative(id: 1, name: 'مندوب 1', nameAr: 'مندوب 1', nameEn: ''),
-            Representative(id: 2, name: 'مندوب 2', nameAr: 'مندوب 2', nameEn: ''),
-            Representative(id: 3, name: 'مندوب 3', nameAr: 'مندوب 3', nameEn: ''),
-          ]
-        : _representatives;
+    final list = _representatives;
 
     return DropdownButtonFormField<int>(
       value: _selectedRepresentativeId,
+      hint: Text(
+        AppStrings.of(context, 'select_representative'),
+        style: const TextStyle(color: Colors.grey),
+      ),
       items: list
           .map(
             (rep) => DropdownMenuItem(
@@ -104,8 +102,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ),
       style: const TextStyle(color: Colors.white),
       validator: (value) {
-        if (list.isNotEmpty && value == null) {
-          return AppStrings.of(context, 'error_generic');
+        if (value == null) {
+          return AppStrings.of(context, 'error_representative_required');
         }
         return null;
       },
@@ -131,6 +129,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final machineSerial = _machineSerialController.text.trim();
       final pass = _passwordController.text.trim();
       final confirmPass = _confirmPasswordController.text.trim();
+      final registrationLocation = address;
 
       final response = await ApiService().register(
         name,
@@ -142,7 +141,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         machineType: machineType,
         machineSerial: machineSerial,
         machineOwnership: _machineOwnership,
-        representativeId: _selectedRepresentativeId,
+        distributorId: _selectedRepresentativeId,
+        location: registrationLocation,
       );
 
       if (response.success) {
@@ -354,6 +354,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   )
                 else
                   _buildRepresentativeDropdown(),
+                if (!_loadingReps && _representatives.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: Text(
+                      AppStrings.of(context, 'no_representatives'),
+                      style: const TextStyle(color: Colors.orangeAccent),
+                    ),
+                  ),
                 const SizedBox(height: 16),
 
                 // Machine Serial

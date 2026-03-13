@@ -29,6 +29,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
   final TextEditingController _searchController = TextEditingController();
   Timer? _debounce;
   bool _isOpeningProduct = false;
+  StreamSubscription<String>? _typeMachineNameSub;
+  String? _lastLoadedTypeMachineName;
+  bool _pendingMachineTypeReload = false;
 
   Future<void> _openProduct(Product product) async {
     if (_isOpeningProduct) return;
@@ -68,6 +71,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
   @override
   void initState() {
     super.initState();
+    _typeMachineNameSub = CutterBluetoothService().typeMachineNameStream.listen(
+          _handleTypeMachineNameChanged,
+        );
     _loadProducts();
     _scrollController.addListener(_onScroll);
   }
@@ -77,7 +83,27 @@ class _ProductListScreenState extends State<ProductListScreen> {
     _scrollController.dispose();
     _searchController.dispose();
     _debounce?.cancel();
+    _typeMachineNameSub?.cancel();
     super.dispose();
+  }
+
+  void _handleTypeMachineNameChanged(String? typeMachineName) {
+    final normalized = (typeMachineName ?? '').trim();
+    if (!mounted || normalized.isEmpty) return;
+    if (_lastLoadedTypeMachineName == normalized) return;
+
+    if (_isLoading) {
+      _pendingMachineTypeReload = true;
+      return;
+    }
+
+    setState(() {
+      _products.clear();
+      _loadedProductIds.clear();
+      _page = 1;
+      _hasMore = true;
+    });
+    _loadProducts();
   }
 
   void _onScroll() {
@@ -126,6 +152,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
       final query = _searchController.text.trim();
       final typeMachineName =
           await CutterBluetoothService().getTypeMachineNameForItems();
+      _lastLoadedTypeMachineName = typeMachineName;
       List<Product> newProducts;
 
       if (query.isNotEmpty) {
@@ -148,6 +175,10 @@ class _ProductListScreenState extends State<ProductListScreen> {
         );
       }
 
+      if (_pendingMachineTypeReload) {
+        return;
+      }
+
       if (newProducts.isEmpty) {
         _hasMore = false;
       } else {
@@ -160,10 +191,21 @@ class _ProductListScreenState extends State<ProductListScreen> {
       print("Error loading products: $e");
     } finally {
       if (mounted) {
+        final shouldReload = _pendingMachineTypeReload;
+        _pendingMachineTypeReload = false;
         setState(() => _isLoading = false);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _ensureMoreIfViewportNotFilled();
         });
+        if (shouldReload) {
+          setState(() {
+            _products.clear();
+            _loadedProductIds.clear();
+            _page = 1;
+            _hasMore = true;
+          });
+          unawaited(_loadProducts());
+        }
       }
     }
   }

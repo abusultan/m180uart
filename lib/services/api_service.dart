@@ -169,14 +169,17 @@ class ApiService {
     String? machineType,
     String? machineSerial,
     String? machineOwnership,
-    int? representativeId,
+    int? distributorId,
+    String? location,
   }) async {
     try {
+      final normalizedOwnership = _normalizeMachineOwnership(machineOwnership);
       final Map<String, dynamic> payload = {
         'name': name,
         'email': email,
         'phone': phone,
         'address': address,
+        'location': (location ?? address).trim(),
         'password': password,
         'password_confirmation': passwordConfirmation,
       };
@@ -185,18 +188,19 @@ class ApiService {
         payload['machine_type'] = machineType;
       }
       if (machineSerial != null && machineSerial.isNotEmpty) {
-        payload['machine_serial'] = machineSerial;
+        payload['serial_number'] = machineSerial;
       }
-      if (machineOwnership != null && machineOwnership.isNotEmpty) {
-        payload['machine_ownership'] = machineOwnership;
+      if (normalizedOwnership != null) {
+        payload['machine_ownership'] = normalizedOwnership;
       }
-      if (representativeId != null) {
-        payload['representative_id'] = representativeId;
+      if (distributorId != null) {
+        payload['distributor_id'] = distributorId;
       }
 
       final response = await _dio.post(
         'register',
-        data: FormData.fromMap(payload),
+        data: payload,
+        options: Options(contentType: Headers.formUrlEncodedContentType),
       );
 
       final loginResponse = LoginResponse.fromJson(response.data);
@@ -206,12 +210,8 @@ class ApiService {
       }
       return loginResponse;
     } catch (e) {
-      // Improve error handling for registration
       if (e is DioException && e.response != null) {
-        // You might want to parse validation errors here
-        throw Exception(
-          "Registration failed: ${e.response?.data['message'] ?? e.message}",
-        );
+        throw Exception(_extractApiErrorMessage(e.response?.data, e.message));
       }
       throw Exception("Registration failed: $e");
     }
@@ -242,12 +242,7 @@ class ApiService {
   // --- Products ---
 
   Future<List<Representative>> getRepresentatives() async {
-    const endpoints = [
-      'distributors/all',
-      'representatives',
-      'mandobs',
-      'reps',
-    ];
+    const endpoints = ['distributors/all'];
     for (final endpoint in endpoints) {
       try {
         final response = await _dio.get(endpoint);
@@ -276,6 +271,45 @@ class ApiService {
       }
     }
     return [];
+  }
+
+  String? _normalizeMachineOwnership(String? rawValue) {
+    final value = rawValue?.trim().toLowerCase();
+    switch (value) {
+      case 'owner':
+      case 'true':
+      case '1':
+        return '1';
+      case 'rent':
+      case 'false':
+      case '0':
+        return '0';
+      default:
+        return null;
+    }
+  }
+
+  String _extractApiErrorMessage(dynamic body, String? fallbackMessage) {
+    if (body is Map) {
+      final errors = body['errors'];
+      if (errors is Map) {
+        for (final value in errors.values) {
+          if (value is List && value.isNotEmpty) {
+            final first = value.first?.toString().trim() ?? '';
+            if (first.isNotEmpty) return first;
+          }
+          final text = value?.toString().trim() ?? '';
+          if (text.isNotEmpty) return text;
+        }
+      }
+
+      final message = body['message']?.toString().trim() ?? '';
+      if (message.isNotEmpty) return message;
+    }
+
+    final fallback = fallbackMessage?.trim() ?? '';
+    if (fallback.isNotEmpty) return fallback;
+    return 'Registration failed';
   }
 
   List<dynamic> _extractListFromPayload(dynamic payload) {
@@ -1065,4 +1099,3 @@ class ApiService {
     return Uri.encodeFull(full);
   }
 }
-

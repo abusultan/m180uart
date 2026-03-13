@@ -23,10 +23,13 @@ class CutterBluetoothService {
   StreamSubscription? _eventSubscription;
   final _receivedDataController = StreamController<String>();
   final _serialUpdateController = StreamController<String?>();
+  final _typeMachineNameController = StreamController<String>();
   late final Stream<String> _receivedDataBroadcast =
       _receivedDataController.stream.asBroadcastStream();
   late final Stream<String?> _serialUpdateBroadcast =
       _serialUpdateController.stream.asBroadcastStream();
+  late final Stream<String> _typeMachineNameBroadcast =
+      _typeMachineNameController.stream.asBroadcastStream();
   String _autoHandshakeBuffer = "";
   bool _suppressAutoHandshake = false;
 
@@ -35,10 +38,13 @@ class CutterBluetoothService {
 
   Stream<String> get receivedDataStream => _receivedDataBroadcast;
   Stream<String?> get serialStream => _serialUpdateBroadcast;
+  Stream<String> get typeMachineNameStream => _typeMachineNameBroadcast;
 
   Object? get connectedDevice => _connectedDevice;
   String? _serialNumber;
   String? get serialNumber => _serialNumber;
+  String? _currentTypeMachineName;
+  String? get currentTypeMachineName => _currentTypeMachineName;
   String? _lastHandshakeMode;
   String? get lastHandshakeMode => _lastHandshakeMode;
   String? _lastOpenPortPath;
@@ -63,6 +69,14 @@ class CutterBluetoothService {
     if (value.isEmpty) return;
     _cachedHandshakeBySerial[_serialCacheKey(value)] =
         _normalizeHandshakeAlgorithm(algorithm);
+  }
+
+  void _emitTypeMachineName(String? value) {
+    final normalized = (value ?? '').trim();
+    if (normalized.isEmpty) return;
+    if (_currentTypeMachineName == normalized) return;
+    _currentTypeMachineName = normalized;
+    _typeMachineNameController.add(normalized);
   }
 
   void setSerialNumber(String? serial) {
@@ -234,6 +248,7 @@ class CutterBluetoothService {
   }
 
   Future<void> _persistTypeMachineName(String typeMachineName) async {
+    _emitTypeMachineName(typeMachineName);
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_lastTypeMachineNameKey, typeMachineName);
@@ -751,13 +766,17 @@ class CutterBluetoothService {
       agentType: _successfulAgentType,
     );
     if (resolved.isNotEmpty) {
+      _emitTypeMachineName(resolved);
       await _persistTypeMachineName(resolved);
       return resolved;
     }
     try {
       final prefs = await SharedPreferences.getInstance();
-      return prefs.getString(_lastTypeMachineNameKey) ?? 'DQ';
+      final stored = prefs.getString(_lastTypeMachineNameKey) ?? 'DQ';
+      _emitTypeMachineName(stored);
+      return stored;
     } catch (_) {
+      _emitTypeMachineName('DQ');
       return 'DQ';
     }
   }

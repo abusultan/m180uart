@@ -46,6 +46,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _suggestionRequestId = 0;
   List<String> _searchSuggestions = [];
   StreamSubscription<String?>? _serialSub;
+  StreamSubscription<String>? _typeMachineNameSub;
+  String? _lastLoadedTypeMachineName;
+  bool _pendingPagedMachineTypeReload = false;
 
   static const Map<String, String> _commonTypos = {
     'utlra': 'ultra',
@@ -57,14 +60,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   bool get _isPagedHierarchyLevel => widget.initialSubCategories == null;
 
-  int _responsiveGridCrossAxisCount(double width) {
+  int _responsiveGridCrossAxisCount(Size size) {
+    final width = size.width;
+    final isLandscape = size.width > size.height;
+
+    if (isLandscape) {
+      if (width >= 1280) return 6;
+      if (width >= 980) return 5;
+      if (width >= 720) return 4;
+      return 3;
+    }
+
     if (width >= 1300) return 5;
     if (width >= 980) return 4;
     if (width >= 700) return 3;
     return 2;
   }
 
-  double _responsiveGridChildAspectRatio(double width) {
+  double _responsiveGridChildAspectRatio(Size size) {
+    final width = size.width;
+    final isLandscape = size.width > size.height;
+
+    if (isLandscape) {
+      if (width >= 1280) return 1.28;
+      if (width >= 980) return 1.18;
+      if (width >= 720) return 1.08;
+      return 1.0;
+    }
+
     if (width >= 1300) return 1.08;
     if (width >= 980) return 1.0;
     if (width >= 700) return 0.92;
@@ -128,6 +151,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _typeMachineNameSub = CutterBluetoothService().typeMachineNameStream.listen(
+          _handleTypeMachineNameChanged,
+        );
     if (_isPagedHierarchyLevel) {
       _categoriesFuture = Future.value(const <Category>[]);
       _subcategoriesScrollController.addListener(_onSubcategoriesScroll);
@@ -157,8 +183,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _suggestionDebounce?.cancel();
     _searchController.dispose();
     _serialSub?.cancel();
+    _typeMachineNameSub?.cancel();
     _subcategoriesScrollController.dispose();
     super.dispose();
+  }
+
+  void _handleTypeMachineNameChanged(String? typeMachineName) {
+    final normalized = (typeMachineName ?? '').trim();
+    if (!mounted || normalized.isEmpty) return;
+    if (_lastLoadedTypeMachineName == normalized) return;
+
+    if (_searchQuery.isNotEmpty) {
+      _onSearchChanged(_searchQuery);
+    }
+
+    if (_isPagedHierarchyLevel) {
+      if (_isLoadingPagedSubcategories) {
+        _pendingPagedMachineTypeReload = true;
+        return;
+      }
+      _resetPagedSubcategoriesAndLoad();
+      return;
+    }
+
+    setState(() {
+      _categoriesFuture = _loadCurrentCategories();
+    });
   }
 
   void _onSubcategoriesScroll() {
@@ -191,6 +241,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       final typeMachineName =
           await CutterBluetoothService().getTypeMachineNameForItems();
+      _lastLoadedTypeMachineName = typeMachineName;
       late final List<Category> pageItems;
       if (widget.currentCategoryId == null) {
         pageItems = await ApiService().getCategoriesPage(
@@ -206,6 +257,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
         );
       }
 
+      if (_pendingPagedMachineTypeReload) {
+        return;
+      }
+
       _pagedSubcategories.addAll(pageItems);
       if (pageItems.length < 20) {
         _hasMorePagedSubcategories = false;
@@ -216,13 +271,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _hasMorePagedSubcategories = false;
     } finally {
       _isLoadingPagedSubcategories = false;
+      final shouldReload = _pendingPagedMachineTypeReload;
+      _pendingPagedMachineTypeReload = false;
       if (mounted) setState(() {});
+      if (shouldReload) {
+        unawaited(_resetPagedSubcategoriesAndLoad());
+      }
     }
   }
 
   Future<List<Category>> _loadCurrentCategories() async {
     final typeMachineName =
         await CutterBluetoothService().getTypeMachineNameForItems();
+    _lastLoadedTypeMachineName = typeMachineName;
 
     if (widget.currentCategoryId != null) {
       final subcategories = await ApiService().getCategorySubcategories(
@@ -936,13 +997,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 gridDelegate:
                                     SliverGridDelegateWithFixedCrossAxisCount(
                                   crossAxisCount: _responsiveGridCrossAxisCount(
-                                    MediaQuery.of(context).size.width,
+                                    MediaQuery.of(context).size,
                                   ),
                                   crossAxisSpacing: 12,
                                   mainAxisSpacing: 12,
                                   childAspectRatio:
                                       _responsiveGridChildAspectRatio(
-                                    MediaQuery.of(context).size.width,
+                                    MediaQuery.of(context).size,
                                   ),
                                 ),
                                 itemCount: _pagedSubcategories.length +
@@ -1070,13 +1131,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                         SliverGridDelegateWithFixedCrossAxisCount(
                                       crossAxisCount:
                                           _responsiveGridCrossAxisCount(
-                                        MediaQuery.of(context).size.width,
+                                        MediaQuery.of(context).size,
                                       ),
                                       crossAxisSpacing: 12,
                                       mainAxisSpacing: 12,
                                       childAspectRatio:
                                           _responsiveGridChildAspectRatio(
-                                        MediaQuery.of(context).size.width,
+                                        MediaQuery.of(context).size,
                                       ),
                                     ),
                                     itemCount: filteredCategories.length,
@@ -1103,12 +1164,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
       onTap: () => _handleCategoryTap(cat),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final compact = constraints.maxWidth < 170;
-          final iconBoxSize = compact ? 60.0 : 76.0;
-          final iconSize = compact ? 22.0 : 26.0;
-          final titleFontSize = compact ? 13.0 : 14.0;
-          final spacing = compact ? 8.0 : 12.0;
-          final cardPadding = compact ? 10.0 : 14.0;
+          final compact = constraints.maxWidth < 190;
+          final iconBoxSize = (constraints.maxWidth * (compact ? 0.42 : 0.48))
+              .clamp(44.0, 68.0);
+          final iconSize = compact ? 20.0 : 24.0;
+          final titleFontSize = compact ? 12.0 : 13.0;
+          final spacing = compact ? 6.0 : 10.0;
+          final cardPadding = compact ? 8.0 : 10.0;
 
           return Container(
             padding: EdgeInsets.all(cardPadding),
@@ -1131,6 +1193,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 if (imageUrl.isNotEmpty)
                   Container(
@@ -1138,7 +1201,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     width: iconBoxSize,
                     decoration: BoxDecoration(
                       color: Colors.white,
-                      borderRadius: BorderRadius.circular(compact ? 14 : 16),
+                      borderRadius: BorderRadius.circular(compact ? 12 : 14),
                       boxShadow: [
                         BoxShadow(
                           color: Colors.black.withOpacity(0.1),
@@ -1148,7 +1211,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ],
                     ),
                     child: ClipRRect(
-                      borderRadius: BorderRadius.circular(compact ? 10 : 12),
+                      borderRadius: BorderRadius.circular(compact ? 8 : 10),
                       child: Image.network(
                         imageUrl,
                         fit: BoxFit.cover,
@@ -1171,7 +1234,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     width: iconBoxSize,
                     decoration: BoxDecoration(
                       color: const Color(0xFF00FF88).withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(compact ? 14 : 16),
+                      borderRadius: BorderRadius.circular(compact ? 12 : 14),
                     ),
                     child: Icon(
                       cat.children.isNotEmpty
@@ -1183,7 +1246,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 SizedBox(height: spacing),
                 Padding(
-                  padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 12),
+                  padding: EdgeInsets.symmetric(horizontal: compact ? 4 : 8),
                   child: Text(
                     _categoryDisplayName(cat),
                     style: TextStyle(
@@ -1236,12 +1299,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
               sliver: SliverGrid(
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: _responsiveGridCrossAxisCount(
-                    MediaQuery.of(context).size.width,
+                    MediaQuery.of(context).size,
                   ),
                   crossAxisSpacing: 12,
                   mainAxisSpacing: 12,
                   childAspectRatio: _responsiveGridChildAspectRatio(
-                    MediaQuery.of(context).size.width,
+                    MediaQuery.of(context).size,
                   ),
                 ),
                 delegate: SliverChildBuilderDelegate((context, index) {
@@ -1375,12 +1438,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 sliver: SliverGrid(
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: _responsiveGridCrossAxisCount(
-                      MediaQuery.of(context).size.width,
+                      MediaQuery.of(context).size,
                     ),
                     crossAxisSpacing: 12,
                     mainAxisSpacing: 12,
                     childAspectRatio: _responsiveGridChildAspectRatio(
-                      MediaQuery.of(context).size.width,
+                      MediaQuery.of(context).size,
                     ),
                   ),
                   delegate: SliverChildBuilderDelegate((context, index) {
