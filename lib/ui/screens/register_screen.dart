@@ -171,12 +171,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
       ),
       style: const TextStyle(color: Colors.white),
-      validator: (value) {
-        if (value == null) {
-          return AppStrings.of(context, 'error_representative_required');
-        }
-        return null;
-      },
     );
   }
 
@@ -415,12 +409,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       minHeight: 40,
                     ),
                   ),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return AppStrings.of(context, 'error_location_empty');
-                    }
-                    return null;
-                  },
                 ),
                 const SizedBox(height: 16),
 

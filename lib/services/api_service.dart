@@ -179,7 +179,7 @@ class ApiService {
       final cleanedAddress = address.trim();
       final cleanedPassword = password.trim();
       final cleanedPasswordConfirmation = passwordConfirmation.trim();
-      final cleanedLocation = (location ?? address).trim();
+      final cleanedLocation = location?.trim() ?? '';
       final cleanedMachineType = machineType?.trim() ?? '';
       final cleanedMachineSerial = machineSerial?.trim() ?? '';
       final normalizedOwnership = _normalizeMachineOwnership(machineOwnership);
@@ -188,10 +188,13 @@ class ApiService {
         'email': cleanedEmail,
         'phone': cleanedPhone,
         'address': cleanedAddress,
-        'location': cleanedLocation,
         'password': cleanedPassword,
         'password_confirmation': cleanedPasswordConfirmation,
       };
+
+      if (cleanedLocation.isNotEmpty) {
+        payload['location'] = cleanedLocation;
+      }
 
       if (cleanedMachineType.isNotEmpty) {
         payload['type_machine'] = cleanedMachineType;
