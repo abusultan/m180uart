@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../services/api_service.dart';
 import '../../core/app_strings.dart';
@@ -36,7 +35,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _confirmPasswordVisible = false;
   String _machineOwnership = 'owner';
   bool _loadingReps = false;
-  bool _gettingLocation = false;
   List<Representative> _representatives = [];
   int? _selectedRepresentativeId;
   String? _selectedMachineType;
@@ -72,66 +70,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _loadingReps = false);
-    }
-  }
-
-  Future<void> _getCurrentLocation() async {
-    if (_gettingLocation) return;
-
-    setState(() {
-      _gettingLocation = true;
-      _error = null;
-    });
-
-    try {
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        throw Exception(
-          AppStrings.of(context, 'error_location_services_disabled'),
-        );
-      }
-
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-
-      if (permission == LocationPermission.denied) {
-        throw Exception(
-          AppStrings.of(context, 'error_location_permission_denied'),
-        );
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        throw Exception(
-          AppStrings.of(context, 'error_location_permission_denied_forever'),
-        );
-      }
-
-      final position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-        ),
-      );
-      final locationUrl =
-          'https://www.google.com/maps/search/?api=1&query='
-          '${position.latitude},${position.longitude}';
-
-      if (!mounted) return;
-      setState(() {
-        _locationController.text = locationUrl;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = e is Exception
-            ? e.toString().replaceFirst('Exception: ', '')
-            : AppStrings.of(context, 'error_location_failed');
-      });
-    } finally {
-      if (mounted) {
-        setState(() => _gettingLocation = false);
-      }
     }
   }
 
@@ -171,6 +109,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
       ),
       style: const TextStyle(color: Colors.white),
+      validator: (value) {
+        if (value == null) {
+          return AppStrings.of(context, 'error_representative_required');
+        }
+        return null;
+      },
     );
   }
 
@@ -193,7 +137,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final machineSerial = _machineSerialController.text.trim();
       final pass = _passwordController.text.trim();
       final confirmPass = _confirmPasswordController.text.trim();
-      final registrationLocation = _locationController.text.trim();
+      final registrationLocation = _locationController.text.trim().isEmpty
+          ? address
+          : _locationController.text.trim();
 
       final response = await ApiService().register(
         name,
@@ -372,8 +318,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                 TextFormField(
                   controller: _locationController,
-                  readOnly: true,
-                  enableInteractiveSelection: false,
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
                     labelText: AppStrings.of(context, 'location'),
@@ -387,26 +331,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     prefixIcon: const Icon(
                       Icons.my_location,
                       color: Color(0xFF00FF88),
-                    ),
-                    suffixIcon: Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: TextButton(
-                        onPressed: _gettingLocation ? null : _getCurrentLocation,
-                        child: _gettingLocation
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Color(0xFF00FF88),
-                                ),
-                              )
-                            : Text(AppStrings.of(context, 'get_location')),
-                      ),
-                    ),
-                    suffixIconConstraints: const BoxConstraints(
-                      minWidth: 110,
-                      minHeight: 40,
                     ),
                   ),
                 ),
