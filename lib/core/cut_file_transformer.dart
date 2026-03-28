@@ -3,6 +3,188 @@ import 'dart:math';
 import 'dart:ui';
 
 class CutFileTransformer {
+  static const String _legacyNarrowOutputMapping = '6240092912';
+  static const Map<String, String> _legacyNarrowDigitMap = {
+    '0': '2',
+    '1': '0',
+    '2': '9',
+    '3': '7',
+    '4': '8',
+    '5': '6',
+    '6': '4',
+    '7': '3',
+    '8': '5',
+    '9': '1',
+  };
+
+  static bool isSjcBytes(List<int> inputBytes) {
+    try {
+      return latin1.decode(inputBytes).contains('WSJP=');
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static bool isPltBytes(List<int> inputBytes) {
+    try {
+      final text = latin1.decode(inputBytes);
+      return text.contains('PU') || text.contains('PD') || text.contains('PA');
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Ensures the cut file starts with a pen-up move to origin (0,0).
+  /// This prevents an unwanted line when the cutter head is not at 0,0
+  /// before cutting starts.
+  static List<int> ensureStartsWithPenUp(List<int> inputBytes) {
+    String text;
+    try {
+      text = latin1.decode(inputBytes);
+    } catch (_) {
+      return inputBytes;
+    }
+
+    final trimmed = text.trim();
+
+    if (trimmed.contains('WSJP=')) {
+      // SJC format: inject U0,0 right after the WSJP=... header token
+      // Original: "IN WSJP=XXXXXXXXXX FSIZE...; U0,0 D0,0 ..."
+      // We ensure U0,0 is the VERY first coordinate token
+      final inIdx = trimmed.indexOf('IN ');
+      if (inIdx == -1) return inputBytes;
+
+      // Find the end of the header (WSJP=...) — next space after WSJP=
+      final wsjpIdx = trimmed.indexOf('WSJP=');
+      if (wsjpIdx == -1) return inputBytes;
+
+      // Find where the first coordinate token starts (after header)
+      // Header ends at first space after WSJP value
+      int headerEnd = trimmed.indexOf(' ', wsjpIdx + 5);
+      if (headerEnd == -1) return inputBytes;
+
+      // Check the token at headerEnd — if it starts with FSIZE, skip it too
+      final rest = trimmed.substring(headerEnd).trimLeft();
+      int insertAt = headerEnd + 1;
+      if (rest.startsWith('FSIZE')) {
+        // skip the FSIZE token
+        final fsizeEnd = trimmed.indexOf(' ', headerEnd + 1);
+        if (fsizeEnd != -1) {
+          insertAt = fsizeEnd + 1;
+        }
+      }
+
+      // Check if U0,0 is already the first coordinate token
+      final afterInsert = trimmed.substring(insertAt).trimLeft();
+      if (afterInsert.startsWith('U0,0')) {
+        // Already starts correctly
+        return inputBytes;
+      }
+
+      // Inject U0,0 before the rest of the tokens
+      final modified =
+          '${trimmed.substring(0, insertAt)}U0,0 ${trimmed.substring(insertAt)}';
+      return latin1.encode(modified);
+    } else if (trimmed.contains('PU') ||
+        trimmed.contains('PD') ||
+        trimmed.contains('PA')) {
+      // PLT/HPGL format: prepend PU0,0; to lift blade and go to origin
+      if (!trimmed.startsWith('PU0,0;') && !trimmed.startsWith('IN;PU0,0;')) {
+        final modified = 'PU0,0;\n$trimmed';
+        return latin1.encode(modified);
+      }
+    }
+
+    return inputBytes;
+  }
+
+  /// Removes the leading calibration/registration marks that some SJC files
+  /// place before the real design path.
+  ///
+  /// Example prefix:
+  /// `U0,0 D0,0 D0,80 U0,0 D960,0 ...`
+  ///
+  /// The legacy Android app effectively skips each `0,0` marker and the next
+  /// non-zero point that follows it before the real `U...` segment begins.
+  static List<int> filterOriginCalibrationMarks(List<int> inputBytes) {
+    String text;
+    try {
+      text = latin1.decode(inputBytes);
+    } catch (_) {
+      return inputBytes;
+    }
+
+    final trimmed = text.trim();
+    if (!trimmed.contains('WSJP=')) return inputBytes;
+
+    final tokens = trimmed
+        .split(RegExp(r'\s+'))
+        .where((t) => t.isNotEmpty)
+        .toList();
+    if (tokens.isEmpty) return inputBytes;
+
+    final headerIndex = tokens.indexWhere((token) => token.contains('WSJP='));
+    if (headerIndex == -1) return inputBytes;
+
+    final mapping = _buildMapping(tokens[headerIndex].replaceAll('WSJP=', ''));
+    if (mapping == null || mapping.length != 10) return inputBytes;
+
+    int firstCoordinateIndex = -1;
+    for (int i = headerIndex + 1; i < tokens.length; i++) {
+      if (tokens[i] == '@') break;
+      if (tokens[i].contains(',')) {
+        firstCoordinateIndex = i;
+        break;
+      }
+    }
+    if (firstCoordinateIndex == -1) return inputBytes;
+
+    int removeUntil = firstCoordinateIndex;
+    bool sawOriginMarker = false;
+
+    for (int i = firstCoordinateIndex; i < tokens.length; i++) {
+      final token = tokens[i];
+      if (token == '@' || !token.contains(',')) {
+        break;
+      }
+
+      final split = token.split(',');
+      if (split.length != 2) break;
+
+      final xDecoded = _decodeNumber(_stripPrefix(split[0]), mapping);
+      final yDecoded = _decodeNumber(_stripPrefix(split[1]), mapping);
+      if (xDecoded == null || yDecoded == null) break;
+
+      final xVal = int.tryParse(xDecoded);
+      final yVal = int.tryParse(yDecoded);
+      if (xVal == null || yVal == null) break;
+
+      if (xVal == 0 && yVal == 0) {
+        sawOriginMarker = true;
+        removeUntil = i + 1;
+        continue;
+      }
+
+      if (sawOriginMarker) {
+        sawOriginMarker = false;
+        removeUntil = i + 1;
+        continue;
+      }
+
+      break;
+    }
+
+    if (removeUntil == firstCoordinateIndex) {
+      return inputBytes;
+    }
+
+    final rebuiltTokens = <String>[
+      ...tokens.take(firstCoordinateIndex),
+      ...tokens.skip(removeUntil),
+    ];
+    return latin1.encode('${rebuiltTokens.join(' ')} ');
+  }
+
   static CutPathData? decodePathData(List<int> inputBytes) {
     String text;
     try {
@@ -12,10 +194,18 @@ class CutFileTransformer {
     }
 
     final trimmed = text.trim();
-    if (!trimmed.contains('WSJP=')) return null;
+    if (trimmed.contains('WSJP=')) {
+      return _decodeSjcPathData(trimmed);
+    } else if (trimmed.contains('PU') ||
+        trimmed.contains('PD') ||
+        trimmed.contains('PA')) {
+      return _decodePltPathData(trimmed);
+    }
+    return null;
+  }
 
-    final normalized =
-        trimmed.replaceAll('IN ', '').replaceAll(' @', '').trim();
+  static CutPathData? _decodeSjcPathData(String text) {
+    final normalized = text.replaceAll('IN ', '').replaceAll(' @', '').trim();
     final parts = normalized.split(RegExp(r'\s+'));
     if (parts.isEmpty) return null;
 
@@ -51,6 +241,69 @@ class CutFileTransformer {
       drawFlags.add(draw);
     }
 
+    return _calculateBounds(points, drawFlags);
+  }
+
+  static CutPathData? _decodePltPathData(String text) {
+    final points = <Offset>[];
+    final drawFlags = <bool>[];
+    bool isDown = false;
+
+    // Basic HPGL parser: PU, PD, PA commands
+    final commands = text.split(';');
+    for (var cmd in commands) {
+      final trimmed = cmd.trim();
+      if (trimmed.isEmpty) continue;
+
+      if (trimmed.startsWith('PU')) {
+        isDown = false;
+        final coords = trimmed.substring(2).trim();
+        if (coords.isNotEmpty) {
+          final p = _parsePltCoords(coords);
+          if (p != null) {
+            points.add(p);
+            drawFlags.add(false);
+          }
+        }
+      } else if (trimmed.startsWith('PD')) {
+        isDown = true;
+        final coords = trimmed.substring(2).trim();
+        if (coords.isNotEmpty) {
+          final p = _parsePltCoords(coords);
+          if (p != null) {
+            points.add(p);
+            drawFlags.add(true);
+          }
+        }
+      } else if (trimmed.startsWith('PA')) {
+        final coords = trimmed.substring(2).trim();
+        if (coords.isNotEmpty) {
+          final p = _parsePltCoords(coords);
+          if (p != null) {
+            points.add(p);
+            drawFlags.add(isDown);
+          }
+        }
+      }
+    }
+
+    if (points.isEmpty) return null;
+    return _calculateBounds(points, drawFlags);
+  }
+
+  static Offset? _parsePltCoords(String coords) {
+    final parts = coords.split(',');
+    if (parts.length < 2) return null;
+    final x = double.tryParse(parts[0]);
+    final y = double.tryParse(parts[1]);
+    if (x == null || y == null) return null;
+    return Offset(x, y);
+  }
+
+  static CutPathData? _calculateBounds(
+    List<Offset> points,
+    List<bool> drawFlags,
+  ) {
     if (points.isEmpty) return null;
 
     double minX = points.first.dx;
@@ -74,10 +327,7 @@ class CutFileTransformer {
     );
   }
 
-  static CutPathData rotatePathData(
-    CutPathData data,
-    double angleDegrees,
-  ) {
+  static CutPathData rotatePathData(CutPathData data, double angleDegrees) {
     if (angleDegrees == 0) return data;
 
     final centerX = data.minX + ((data.maxX - data.minX) / 2.0);
@@ -119,6 +369,7 @@ class CutFileTransformer {
   static CutPathData mirrorPathData(CutPathData data) {
     final mirroredPoints = <Offset>[];
     for (final p in data.points) {
+      // Mirror horizontally around the center: x' = (maxX + minX) - x
       final rx = (data.maxX + data.minX) - p.dx;
       mirroredPoints.add(Offset(rx, p.dy));
     }
@@ -133,9 +384,7 @@ class CutFileTransformer {
     );
   }
 
-  static List<int> applyMirrorToBytes({
-    required List<int> inputBytes,
-  }) {
+  static List<int> applyMirrorToBytes({required List<int> inputBytes}) {
     String text;
     try {
       text = latin1.decode(inputBytes);
@@ -148,8 +397,10 @@ class CutFileTransformer {
       return inputBytes;
     }
 
-    final normalized =
-        trimmed.replaceAll('IN ', '').replaceAll(' @', '').trim();
+    final normalized = trimmed
+        .replaceAll('IN ', '')
+        .replaceAll(' @', '')
+        .trim();
     final parts = normalized.split(RegExp(r'\s+'));
     if (parts.isEmpty) return inputBytes;
 
@@ -202,8 +453,8 @@ class CutFileTransformer {
     }
 
     for (final p in decodedPoints) {
-      final mirroredX = (maxX + minX) - p.x;
-      p.x = mirroredX.round();
+      // Mirror horizontally: x' = (maxX + minX) - x
+      p.x = (maxX + minX) - p.x;
 
       final xEncoded = _encodeNumber(p.x.toString(), mapping);
       final yEncoded = _encodeNumber(p.y.toString(), mapping);
@@ -232,8 +483,10 @@ class CutFileTransformer {
       return inputBytes;
     }
 
-    final normalized =
-        trimmed.replaceAll('IN ', '').replaceAll(' @', '').trim();
+    final normalized = trimmed
+        .replaceAll('IN ', '')
+        .replaceAll(' @', '')
+        .trim();
     final parts = normalized.split(RegExp(r'\s+'));
     if (parts.isEmpty) return inputBytes;
 
@@ -312,13 +565,17 @@ class CutFileTransformer {
     return latin1.encode(rebuilt);
   }
 
-  static List<int> applyPhonefilmSpeedPressure({
+  /// Rebuilds SJC data for narrow legacy cutters (<160mm max width).
+  ///
+  /// This matches the legacy Android app behavior:
+  /// 1. Decode the original coordinates using the source mapping.
+  /// 2. Drop initial origin calibration tokens.
+  /// 3. Rebase the design to the minimum X/Y.
+  /// 4. Emit the legacy fixed `WSJP=6240092912` mapping.
+  /// 5. Start and end with a pen-up move to origin.
+  static List<int> rebuildSjcForNarrowLegacyCutter({
     required List<int> inputBytes,
-    required int speed,
-    required int pressure,
   }) {
-    if (speed <= 0 && pressure <= 0) return inputBytes;
-
     String text;
     try {
       text = latin1.decode(inputBytes);
@@ -326,30 +583,106 @@ class CutFileTransformer {
       return inputBytes;
     }
 
-    if (!text.contains('IN')) return inputBytes;
-
-    final cmd = _buildPhonefilmCmd(speed, pressure);
-    if (cmd.isEmpty) return inputBytes;
-
-    // Follow PhoneFilm behavior: remove existing IN tokens and re-insert with CMD payload.
-    final rebuilt = 'IN $cmd' + text.replaceAll('IN', '');
-    return latin1.encode(rebuilt);
-  }
-
-  static String _buildPhonefilmCmd(int speed, int pressure) {
-    final sb = StringBuffer();
-    if (speed >= 1) {
-      final s = speed.clamp(1, 4);
-      sb.write('CMD:100,11,$s;');
+    final trimmed = text.trim();
+    if (!trimmed.contains('WSJP=')) {
+      return inputBytes;
     }
-    if (pressure >= 1) {
-      final p = pressure.clamp(1, 5);
-      sb.write('CMD:100,10,$p;');
+
+    final normalized = trimmed
+        .replaceAll('IN ', '')
+        .replaceAll(' @', '')
+        .trim();
+    final parts = normalized.split(RegExp(r'\s+'));
+    if (parts.isEmpty) return inputBytes;
+
+    final header = parts.first;
+    if (!header.contains('WSJP=')) return inputBytes;
+
+    final sourceMappingStr = header.replaceAll('WSJP=', '');
+    final mapping = _buildMapping(sourceMappingStr);
+    if (mapping == null || mapping.length != 10) return inputBytes;
+
+    final segments = <List<_LegacyCutPoint>>[];
+    List<_LegacyCutPoint>? currentSegment;
+    int skipCounter = 0;
+
+    int? minX;
+    int? maxX;
+    int? minY;
+    int? maxY;
+
+    for (int i = 1; i < parts.length; i++) {
+      final token = parts[i];
+      final split = token.split(',');
+      if (split.length != 2) continue;
+
+      final prefix = _prefixOf(split[0]);
+      if (prefix == 'U' || currentSegment == null) {
+        currentSegment = <_LegacyCutPoint>[];
+        segments.add(currentSegment);
+      }
+
+      final xDecoded = _decodeNumber(_stripPrefix(split[0]), mapping);
+      final yDecoded = _decodeNumber(_stripPrefix(split[1]), mapping);
+      if (xDecoded == null || yDecoded == null) continue;
+
+      final xVal = int.tryParse(xDecoded);
+      final yVal = int.tryParse(yDecoded);
+      if (xVal == null || yVal == null) continue;
+
+      if (xVal == 0 && yVal == 0) {
+        skipCounter++;
+        continue;
+      }
+
+      if (skipCounter > 0) {
+        skipCounter = 0;
+        continue;
+      }
+
+      currentSegment.add(_LegacyCutPoint(x: xVal, y: yVal));
+
+      minX = minX == null ? xVal : min(minX, xVal);
+      maxX = maxX == null ? xVal : max(maxX, xVal);
+      minY = minY == null ? yVal : min(minY, yVal);
+      maxY = maxY == null ? yVal : max(maxY, yVal);
     }
-    return sb.toString();
+
+    if (minX == null || maxX == null || minY == null || maxY == null) {
+      return inputBytes;
+    }
+
+    final width = maxX - minX;
+    final height = maxY - minY;
+    final zero = _encodeLegacyNarrowNumber('0');
+    final buffer = StringBuffer(
+      'IN WSJP=$_legacyNarrowOutputMapping FSIZE$height,$width; ',
+    );
+
+    // Match the legacy Android app by explicitly starting from origin.
+    buffer.write('U$zero,$zero ');
+    buffer.write('D$zero,$zero ');
+
+    for (final segment in segments) {
+      if (segment.isEmpty) continue;
+      for (int i = 0; i < segment.length; i++) {
+        final point = segment[i];
+        final encodedPrimary = _encodeLegacyNarrowNumber(
+          (point.y - minY).toString(),
+        );
+        final encodedSecondary = _encodeLegacyNarrowNumber(
+          (point.x - minX).toString(),
+        );
+        if (i == 0) {
+          buffer.write('U$encodedPrimary,$encodedSecondary ');
+        }
+        buffer.write('D$encodedPrimary,$encodedSecondary ');
+      }
+    }
+
+    buffer.write('U$zero,$zero @ ');
+    return latin1.encode(buffer.toString());
   }
-
-
 
   static String _prefixOf(String value) {
     if (value.isEmpty) return '';
@@ -435,6 +768,17 @@ class CutFileTransformer {
     return buffer.toString();
   }
 
+  static String _encodeLegacyNarrowNumber(String value) {
+    final buffer = StringBuffer();
+    for (final ch in value.split('')) {
+      if (ch == '-') {
+        buffer.write(ch);
+      } else {
+        buffer.write(_legacyNarrowDigitMap[ch] ?? ch);
+      }
+    }
+    return buffer.toString();
+  }
 }
 
 class _PointToken {
@@ -451,6 +795,13 @@ class _PointToken {
   int y;
   final String xPrefix;
   final String yPrefix;
+}
+
+class _LegacyCutPoint {
+  const _LegacyCutPoint({required this.x, required this.y});
+
+  final int x;
+  final int y;
 }
 
 class CutPathData {

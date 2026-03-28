@@ -3,28 +3,196 @@ import 'package:shared_preferences/shared_preferences.dart';
 class CutSettingsService {
   static const _keySpeed = 'cut_speed';
   static const _keyPressure = 'cut_pressure';
+  static const _keyDqSpeed = 'cut_speed_dq';
+  static const _keyDqPressure = 'cut_pressure_dq';
+  static const _keySunshineSpeed = 'cut_speed_sunshine';
+  static const _keySunshinePressure = 'cut_pressure_sunshine';
   static const _keyAutoFeed = 'cut_auto_feed';
   static const _keyAngleEnabled = 'cut_angle_enabled';
   static const _keyAngleValue = 'cut_angle_value';
   static const _keySettingsVersion = 'cut_settings_version';
   static const int _resetVersion = 2;
 
+  static const String scopeGeneric = 'generic';
+  static const String scopeDq = 'dq';
+  static const String scopeSunshine = 'sunshine';
+
   static const int defaultSpeed = 1;
   static const int defaultPressure = 3;
+  static const int defaultDqSpeed = 1;
+  static const int defaultDqPressure = 1;
+  static const int defaultSunshineSpeed = 1;
+  static const int defaultSunshinePressure = 1;
   static const bool defaultAutoFeed = true;
   static const bool defaultAngleEnabled = false;
   static const double defaultAngleValue = 0;
 
-  Future<int> getSpeed() async {
-    final prefs = await SharedPreferences.getInstance();
-    await _ensureResetApplied(prefs);
-    return prefs.getInt(_keySpeed) ?? defaultSpeed;
+  static String normalizeScope(String? scope) {
+    switch ((scope ?? '').trim().toLowerCase()) {
+      case scopeSunshine:
+        return scopeSunshine;
+      case scopeDq:
+        return scopeDq;
+      default:
+        return scopeGeneric;
+    }
   }
 
-  Future<int> getPressure() async {
+  static String normalizeAgentType(String? agentType) {
+    return (agentType ?? '')
+        .trim()
+        .toUpperCase()
+        .replaceAll('-', '_')
+        .replaceAll(' ', '_');
+  }
+
+  static bool _isRockspaceAliasSerial(String serial) {
+    return serial.startsWith('C180B') ||
+        serial.startsWith('ZC2') ||
+        serial.startsWith('ZC3');
+  }
+
+  static String resolveScopeForMachine({
+    String? typeMachineName,
+    String? serialNumber,
+    String? agentType,
+  }) {
+    final normalizedType = (typeMachineName ?? '').trim().toLowerCase();
+    final normalizedSerial = (serialNumber ?? '').trim().toUpperCase();
+    final normalizedAgent = normalizeAgentType(agentType);
+
+    if (normalizedType == scopeSunshine) {
+      return scopeSunshine;
+    }
+
+    final isRockspace =
+        normalizedType == 'rock_space' ||
+        normalizedAgent == 'ROCKSPACE_BLUE' ||
+        _isRockspaceAliasSerial(normalizedSerial);
+
+    final isDqFamily =
+        normalizedType == 'dq' ||
+        normalizedAgent == 'DQ' ||
+        normalizedAgent == 'DX' ||
+        normalizedAgent == 'LH' ||
+        normalizedSerial.startsWith('DQ') ||
+        normalizedSerial.startsWith('DX') ||
+        normalizedSerial.startsWith('LH');
+
+    if (!isRockspace && isDqFamily) {
+      return scopeDq;
+    }
+
+    return scopeGeneric;
+  }
+
+  static int minSpeedForScope(String scope) => 1;
+
+  static int maxSpeedForScope(String scope) {
+    switch (normalizeScope(scope)) {
+      case scopeSunshine:
+      case scopeDq:
+        return 4;
+      default:
+        return 30;
+    }
+  }
+
+  static int minPressureForScope(String scope) => 1;
+
+  static int maxPressureForScope(String scope) {
+    switch (normalizeScope(scope)) {
+      case scopeSunshine:
+        return 4;
+      case scopeDq:
+        return 5;
+      default:
+        return 30;
+    }
+  }
+
+  static int defaultSpeedForScope(String scope) {
+    switch (normalizeScope(scope)) {
+      case scopeSunshine:
+        return defaultSunshineSpeed;
+      case scopeDq:
+        return defaultDqSpeed;
+      default:
+        return defaultSpeed;
+    }
+  }
+
+  static int defaultPressureForScope(String scope) {
+    switch (normalizeScope(scope)) {
+      case scopeSunshine:
+        return defaultSunshinePressure;
+      case scopeDq:
+        return defaultDqPressure;
+      default:
+        return defaultPressure;
+    }
+  }
+
+  static int clampSpeed(int value, {String scope = scopeGeneric}) {
+    final normalizedScope = normalizeScope(scope);
+    final min = minSpeedForScope(normalizedScope);
+    final max = maxSpeedForScope(normalizedScope);
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
+  }
+
+  static int clampPressure(int value, {String scope = scopeGeneric}) {
+    final normalizedScope = normalizeScope(scope);
+    final min = minPressureForScope(normalizedScope);
+    final max = maxPressureForScope(normalizedScope);
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
+  }
+
+  String _speedKeyForScope(String scope) {
+    switch (normalizeScope(scope)) {
+      case scopeSunshine:
+        return _keySunshineSpeed;
+      case scopeDq:
+        return _keyDqSpeed;
+      default:
+        return _keySpeed;
+    }
+  }
+
+  String _pressureKeyForScope(String scope) {
+    switch (normalizeScope(scope)) {
+      case scopeSunshine:
+        return _keySunshinePressure;
+      case scopeDq:
+        return _keyDqPressure;
+      default:
+        return _keyPressure;
+    }
+  }
+
+  Future<int> getSpeed({String scope = scopeGeneric}) async {
     final prefs = await SharedPreferences.getInstance();
     await _ensureResetApplied(prefs);
-    return prefs.getInt(_keyPressure) ?? defaultPressure;
+    final normalizedScope = normalizeScope(scope);
+    final stored = prefs.getInt(_speedKeyForScope(normalizedScope));
+    if (stored == null) {
+      return defaultSpeedForScope(normalizedScope);
+    }
+    return clampSpeed(stored, scope: normalizedScope);
+  }
+
+  Future<int> getPressure({String scope = scopeGeneric}) async {
+    final prefs = await SharedPreferences.getInstance();
+    await _ensureResetApplied(prefs);
+    final normalizedScope = normalizeScope(scope);
+    final stored = prefs.getInt(_pressureKeyForScope(normalizedScope));
+    if (stored == null) {
+      return defaultPressureForScope(normalizedScope);
+    }
+    return clampPressure(stored, scope: normalizedScope);
   }
 
   Future<bool> getAutoFeed() async {
@@ -52,14 +220,22 @@ class CutSettingsService {
   }
 
 
-  Future<void> setSpeed(int value) async {
+  Future<void> setSpeed(int value, {String scope = scopeGeneric}) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_keySpeed, value);
+    final normalizedScope = normalizeScope(scope);
+    await prefs.setInt(
+      _speedKeyForScope(normalizedScope),
+      clampSpeed(value, scope: normalizedScope),
+    );
   }
 
-  Future<void> setPressure(int value) async {
+  Future<void> setPressure(int value, {String scope = scopeGeneric}) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_keyPressure, value);
+    final normalizedScope = normalizeScope(scope);
+    await prefs.setInt(
+      _pressureKeyForScope(normalizedScope),
+      clampPressure(value, scope: normalizedScope),
+    );
   }
 
   Future<void> setAutoFeed(bool value) async {
@@ -76,5 +252,4 @@ class CutSettingsService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_keyAngleValue, value);
   }
-
 }

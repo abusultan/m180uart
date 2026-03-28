@@ -60,9 +60,21 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     if (mounted) setState(() {});
   }
 
+  Future<String> _resolveCutSettingsScope() async {
+    final typeMachineName = _bluetooth.isConnected
+        ? await _bluetooth.getTypeMachineNameForItems()
+        : null;
+    return CutSettingsService.resolveScopeForMachine(
+      typeMachineName: typeMachineName,
+      serialNumber: _bluetooth.serialNumber,
+      agentType: _bluetooth.cachedAgentType,
+    );
+  }
+
   Future<void> _loadCutSettings() async {
-    final speed = await _cutSettings.getSpeed();
-    final pressure = await _cutSettings.getPressure();
+    final settingsScope = await _resolveCutSettingsScope();
+    final speed = await _cutSettings.getSpeed(scope: settingsScope);
+    final pressure = await _cutSettings.getPressure(scope: settingsScope);
     final angleEnabled = await _cutSettings.getAngleEnabled();
     final angleValue = await _cutSettings.getAngleValue();
     if (!mounted) return;
@@ -124,8 +136,8 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       }
 
       _cutFile = file;
-      final bytes = await file.readAsBytes();
-      if (_looksLikeSvgUrl(url) || _looksLikeSvgBytes(bytes)) {
+      final rawBytes = await file.readAsBytes();
+      if (_looksLikeSvgUrl(url) || _looksLikeSvgBytes(rawBytes)) {
         if (!mounted) return;
         setState(() {
           _previewVisualUrl = url;
@@ -134,6 +146,10 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         });
         return;
       }
+      final isSjcFile = CutFileTransformer.isSjcBytes(rawBytes);
+      final bytes = isSjcFile
+          ? CutFileTransformer.filterOriginCalibrationMarks(rawBytes)
+          : rawBytes;
       final data = CutFileTransformer.decodePathData(bytes);
 
       if (!mounted) return;
@@ -149,14 +165,10 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
           ? CutFileTransformer.rotatePathData(data, -_angleValue)
           : data;
 
-      final processed = _isMirroredMachine
-          ? CutFileTransformer.mirrorPathData(rotated)
-          : rotated;
-
       setState(() {
         _previewVisualUrl = null;
         _previewVisualIsSvg = false;
-        _previewData = processed;
+        _previewData = rotated;
         _previewLoading = false;
       });
     } catch (e) {
@@ -170,22 +182,55 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
 
   bool _usesPltFormat() {
     final serial = _bluetooth.serialNumber?.toUpperCase() ?? '';
-    final agent = _bluetooth.cachedAgentType?.toUpperCase() ?? '';
+    final agent = _normalizedAgentType();
     return serial.startsWith("DQ") ||
         serial.startsWith("DX") ||
         serial.startsWith("LH") ||
+        _isRockspaceAliasSerial(serial) ||
+        _isDqFamilyAgent(agent) ||
         agent == "ROCKSPACE_BLUE";
   }
 
   bool get _isMirroredMachine {
     final serial = _bluetooth.serialNumber?.toUpperCase() ?? '';
-    final agent = _bluetooth.cachedAgentType?.toUpperCase() ?? '';
+    final agent = _normalizedAgentType();
     bool isException = serial.startsWith("DQ") ||
         serial.startsWith("DX") ||
         serial.startsWith("LH") ||
         serial.startsWith("DH") ||
+        _isRockspaceAliasSerial(serial) ||
+        _isDqFamilyAgent(agent) ||
         agent == "ROCKSPACE_BLUE";
     return !isException;
+  }
+
+  String _normalizedAgentType() {
+    return _normalizeAgentTypeValue(_bluetooth.cachedAgentType);
+  }
+
+  String _normalizeAgentTypeValue(String? value) {
+    return (value ?? '')
+        .trim()
+        .toUpperCase()
+        .replaceAll('-', '_')
+        .replaceAll(' ', '_');
+  }
+
+  bool _isDqFamilyAgent(String agentType) {
+    return agentType == 'DQ' || agentType == 'DX' || agentType == 'LH';
+  }
+
+  bool _isRockspaceAliasSerial(String serial) {
+    return serial.startsWith("C180B") ||
+        serial.startsWith("ZC2") ||
+        serial.startsWith("ZC3");
+  }
+
+  bool _shouldAutoMirrorBytes(List<int> bytes) {
+    if (CutFileTransformer.isSjcBytes(bytes)) {
+      return false;
+    }
+    return _isMirroredMachine;
   }
 
   Widget _buildPreview() {
@@ -201,8 +246,12 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         child: Stack(
           children: [
             Positioned.fill(
-              child: CustomPaint(
-                painter: StaticCutPainter(_previewData!, color: Colors.black),
+              child: Transform(
+                alignment: Alignment.center,
+                transform: Matrix4.diagonal3Values(-1.0, 1.0, 1.0),
+                child: CustomPaint(
+                  painter: StaticCutPainter(_previewData!, color: Colors.black),
+                ),
               ),
             ),
             _buildAngleBadge(),
@@ -221,22 +270,26 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         children: [
           const Positioned.fill(child: ColoredBox(color: Colors.white)),
           Positioned.fill(
-            child: isSvg
-                ? SvgRenderer(
-                    url: normalizedUrl,
-                    isCutLine: true,
-                  )
-                : Image.network(
-                    normalizedUrl,
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => const Center(
-                      child: Icon(
-                        Icons.broken_image,
-                        color: Colors.grey,
-                        size: 50,
+            child: Directionality(
+              textDirection: TextDirection.ltr,
+              child: isSvg
+                  ? SvgRenderer(
+                      url: normalizedUrl,
+                      isCutLine: true,
+                    )
+                  : Image.network(
+                      normalizedUrl,
+                      fit: BoxFit.contain,
+                      matchTextDirection: false,
+                      errorBuilder: (_, __, ___) => const Center(
+                        child: Icon(
+                          Icons.broken_image,
+                          color: Colors.grey,
+                          size: 50,
+                        ),
                       ),
                     ),
-                  ),
+            ),
           ),
           _buildAngleBadge(),
         ],
@@ -395,39 +448,49 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       await Future.delayed(const Duration(milliseconds: 500));
       await _bluetooth.write("BD:110,3;");
       await Future.delayed(const Duration(milliseconds: 2000));
-      await _bluetooth.write("BD:4,$_defaultSpeed;");
-      await _bluetooth.write("BD:3,$_defaultPressure;");
+      final settingsScope = await _resolveCutSettingsScope();
+      if (settingsScope != CutSettingsService.scopeGeneric) {
+        await _bluetooth.sendMachineSpeed(_defaultSpeed);
+        await Future.delayed(const Duration(milliseconds: 120));
+        await _bluetooth.sendMachinePressure(_defaultPressure);
+      } else {
+        await _bluetooth.write("BD:4,$_defaultSpeed;");
+        await _bluetooth.write("BD:3,$_defaultPressure;");
+      }
 
       setState(() => _status = AppStrings.of(context, 'status_sending_data'));
       List<int> bytesToSend = await _cutFile!.readAsBytes();
-      if (_angleEnabled && _angleValue != 0)
+      final bool isSjcFile = CutFileTransformer.isSjcBytes(bytesToSend);
+      if (isSjcFile) {
+        bytesToSend = CutFileTransformer.filterOriginCalibrationMarks(
+          bytesToSend,
+        );
+      }
+      if (isSjcFile && _angleEnabled && _angleValue != 0)
         bytesToSend = CutFileTransformer.applyAngleToBytes(
           inputBytes: bytesToSend,
           angleDegrees: _angleValue,
         );
-      if (_isMirroredMachine)
+      if (_shouldAutoMirrorBytes(bytesToSend))
         bytesToSend = CutFileTransformer.applyMirrorToBytes(
           inputBytes: bytesToSend,
         );
 
-      if (_usesPltFormat()) {
-        const int blockSize = 1024;
-        int offset = 0;
-        while (offset < bytesToSend.length) {
-          int end = (offset + blockSize > bytesToSend.length)
-              ? bytesToSend.length
-              : offset + blockSize;
-          await _bluetooth.writeBytes(
-            bytesToSend.sublist(offset, end),
-            forceWithResponse: true,
-            chunkSize: 20,
-            packetDelayMs: 60,
-          );
-          await Future.delayed(const Duration(milliseconds: 200));
-          offset = end;
-        }
-      } else {
-        await _bluetooth.writeBytes(bytesToSend);
+      const int chunkSize = 2048;
+      const int firstChunkSize = 256;
+      int offset = 0;
+      while (offset < bytesToSend.length) {
+        final currentChunkSize = offset == 0 ? firstChunkSize : chunkSize;
+        int end = (offset + currentChunkSize > bytesToSend.length)
+            ? bytesToSend.length
+            : offset + currentChunkSize;
+        await _bluetooth.writeBytes(
+          bytesToSend.sublist(offset, end),
+          forceWithResponse: offset == 0,
+          packetDelayMs: offset == 0 ? 40 : 20,
+        );
+        await Future.delayed(const Duration(milliseconds: 100));
+        offset = end;
       }
 
       await Future.delayed(const Duration(milliseconds: 1000));

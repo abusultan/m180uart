@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/handshake_response_resolver.dart';
 import 'api_service.dart';
+import 'cut_settings_service.dart';
 
 class CutterBluetoothService {
   static const String _lastTypeMachineNameKey = 'last_type_machine_name';
@@ -549,6 +550,89 @@ class CutterBluetoothService {
         await Future.delayed(Duration(milliseconds: packetDelayMs));
       }
     }
+  }
+
+  Future<String> _resolveSettingsScope() async {
+    final typeMachineName = await getTypeMachineNameForItems();
+    return CutSettingsService.resolveScopeForMachine(
+      typeMachineName: typeMachineName,
+      serialNumber: _serialNumber,
+      agentType: cachedAgentType,
+    );
+  }
+
+  Future<void> _sendProtocolCommands(List<String> commands) async {
+    for (final command in commands) {
+      final trimmed = command.trim();
+      if (trimmed.isEmpty) continue;
+      await write(trimmed);
+    }
+  }
+
+  Future<void> sendMachineSpeed(int speedLevel) async {
+    if (!_isConnected) return;
+    final scope = await _resolveSettingsScope();
+    if (scope == CutSettingsService.scopeDq ||
+        scope == CutSettingsService.scopeSunshine) {
+      final normalized = CutSettingsService.clampSpeed(speedLevel, scope: scope);
+      await _sendProtocolCommands([';BD:100,11,$normalized;BD:101,9;']);
+      return;
+    }
+    final normalized = CutSettingsService.clampSpeed(speedLevel);
+    await _sendProtocolCommands([';BD:100,11,$normalized;']);
+  }
+
+  Future<void> sendMachinePressure(int pressureForce) async {
+    if (!_isConnected) return;
+    final scope = await _resolveSettingsScope();
+    if (scope == CutSettingsService.scopeDq ||
+        scope == CutSettingsService.scopeSunshine) {
+      final normalized = CutSettingsService.clampPressure(
+        pressureForce,
+        scope: scope,
+      );
+      await _sendProtocolCommands([';BD:100,10,$normalized;BD:101,9;']);
+      return;
+    }
+    final normalized = CutSettingsService.clampPressure(pressureForce);
+    await _sendProtocolCommands([';BD:100,12,$normalized;']);
+  }
+
+  void toggleInduction(bool isOn) {
+    if (!_isConnected) return;
+    unawaited(
+      _sendProtocolCommands([isOn ? ';BD:34,1;BD:34;' : ';BD:34,0;BD:34;']),
+    );
+  }
+
+  void setMachineLEDBrightness(int level) {
+    if (!_isConnected) return;
+    String command;
+    if (level <= 0) {
+      command = ';LED0,0,0;';
+    } else if (level == 1) {
+      command = ';LED100,100,100;';
+    } else if (level == 2) {
+      command = ';LED180,180,180;';
+    } else {
+      command = ';LED255,255,255;';
+    }
+    unawaited(_sendProtocolCommands([command]));
+  }
+
+  void sendTestCut() {
+    if (!_isConnected) return;
+    unawaited(_sendProtocolCommands([';BD:100,100;']));
+  }
+
+  void requestMachineInfo() {
+    if (!_isConnected) return;
+    unawaited(_sendProtocolCommands([';RINFO;']));
+  }
+
+  Future<void> requestMaxWidth() async {
+    if (!_isConnected) return;
+    await _sendProtocolCommands(['BD:100,20,0;']);
   }
 
   Future<bool> performPrintHandshakeDQ({
