@@ -56,6 +56,9 @@ class CutterBluetoothService {
   final Map<String, String> _cachedHandshakeBySerial = {};
   bool _isBypassMode = false;
   String? _cachedAgentType;
+  int _handshakeAttemptIndex = 0;
+  int? _lastHandshakeChallenge;
+  String? _lastAttemptedAlgo;
 
   String _serialCacheKey(String serial) => serial.trim().toUpperCase();
 
@@ -787,6 +790,15 @@ class CutterBluetoothService {
           _handleAutoHandshake(message);
         }
       }
+
+      // If we see a CBM response, it means the machine is unlocked and communicating.
+      // If we were trying a handshake, this is the sign of success!
+      if (message.contains("CBM=") && _lastAttemptedAlgo != null) {
+        final winner = _lastAttemptedAlgo!;
+        _lastAttemptedAlgo = null;
+        _handshakeAttemptIndex = 0;
+        cacheSuccessfulHandshake(winner, false, mode: 'auto', persist: true);
+      }
     }
 
     clean = clean.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), '');
@@ -801,24 +813,39 @@ class CutterBluetoothService {
       String numStr = data.substring(start, end).trim();
       int challenge = int.parse(numStr);
 
-      String? cachedAlgo = _successfulAgentType;
-      if ((cachedAlgo == null || cachedAlgo.isEmpty) && _serialNumber != null) {
-        cachedAlgo = _getCachedHandshakeFromMemory(_serialNumber);
+      // If it's a new challenge, we might want to try the next algo if the previous one didn't unlock it.
+      if (_lastHandshakeChallenge != null && _lastHandshakeChallenge != challenge) {
+        _handshakeAttemptIndex++;
+      }
+      _lastHandshakeChallenge = challenge;
+
+      String algoToTry;
+      
+      // 1. Try currently active/successful one if exists
+      if (_successfulAgentType != null && _successfulAgentType!.isNotEmpty) {
+        algoToTry = _successfulAgentType!;
+      } 
+      // 2. Try cached one for this serial if exists
+      else if (_serialNumber != null && _serialNumber!.isNotEmpty) {
+        final cached = _getCachedHandshakeFromMemory(_serialNumber);
+        algoToTry = HandshakeResponseResolver.normalizeOrDefault(cached);
+      }
+      // 3. Brute force through all supported algorithms
+      else {
+        final sequence = HandshakeResponseResolver.supportedAlgorithms;
+        algoToTry = sequence[_handshakeAttemptIndex % sequence.length];
       }
 
-      final normalizedAlgo = _normalizeHandshakeAlgorithm(cachedAlgo);
       final response = HandshakeResponseResolver.resolveChallengeResponse(
-        algorithm: normalizedAlgo,
+        algorithm: algoToTry,
         challenge: challenge,
       );
 
-      if (_successfulAgentType == null || _successfulAgentType!.isEmpty) {
-        _successfulAgentType = normalizedAlgo;
+      _lastAttemptedAlgo = algoToTry;
+      if (_successfulAgentType == null) {
+        _successfulAgentType = algoToTry;
       }
-      if (_serialNumber != null && _serialNumber!.isNotEmpty) {
-        _rememberCachedHandshake(_serialNumber!, normalizedAlgo);
-      }
-
+      
       write("BD:12,$response;");
     } catch (_) {}
   }
