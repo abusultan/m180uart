@@ -57,6 +57,8 @@ class HandshakeResponseResolver {
       case 'GETDQHANDSHAKE':
       case 'SKYCUT_DQ':
       case 'PRINT_DQ':
+      case 'UPPRINTING':
+      case 'UPUS':
         return algoDQHandshake;
       case 'MECHANIC_UART':
       case 'MECHANIC':
@@ -90,11 +92,13 @@ class HandshakeResponseResolver {
 
     final preferred = normalizeAlgorithm(preferredAlgorithm);
     if (preferred == null || preferred == algoSunshine) {
-      return List<String>.from(sunshineAlgorithms);
+      return List<String>.from(supportedAlgorithms);
     }
 
-    final algorithms = List<String>.from(sunshineAlgorithms);
-    algorithms.remove(preferred);
+    final algorithms = List<String>.from(supportedAlgorithms);
+    if (algorithms.contains(preferred)) {
+      algorithms.remove(preferred);
+    }
     algorithms.insert(0, preferred);
     return algorithms;
   }

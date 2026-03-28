@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../services/cut_settings_service.dart';
 import '../../services/bluetooth_service.dart';
 import '../../core/app_strings.dart';
+import '../../core/handshake_response_resolver.dart';
 import 'system_information_screen.dart';
 
 Future<double?> showAngleDialog(
@@ -76,6 +77,7 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
   bool _autoFeed = CutSettingsService.defaultAutoFeed;
   bool _angleEnabled = CutSettingsService.defaultAngleEnabled;
   double _angleValue = CutSettingsService.defaultAngleValue;
+  String? _handshakeAlgo;
   int _speedMax = CutSettingsService.maxSpeedForScope(
     CutSettingsService.scopeGeneric,
   );
@@ -166,6 +168,8 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
       _autoFeed = autoFeed;
       _angleEnabled = angleEnabled;
       _angleValue = angleValue;
+      _handshakeAlgo = _bluetooth.cachedAgentType ??
+          HandshakeResponseResolver.algoPassWord2;
       _speedMax = CutSettingsService.maxSpeedForScope(settingsScope);
       _pressureMax = CutSettingsService.maxPressureForScope(settingsScope);
       _loading = false;
@@ -265,6 +269,12 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
     if (result != null) {
       await _saveAngleValue(result);
     }
+  }
+
+  Future<void> _saveHandshakeAlgo(String? value) async {
+    if (value == null) return;
+    setState(() => _handshakeAlgo = value);
+    await _bluetooth.cacheSuccessfulHandshake(value, false, mode: 'manual');
   }
 
   Future<void> _runFilmCutterTest() async {
@@ -499,6 +509,51 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                   ),
+                  const SizedBox(height: 24),
+                  const Divider(color: Colors.white24),
+                  const SizedBox(height: 16),
+                  const Text(
+                    "Handshake Algorithm",
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: HandshakeResponseResolver.supportedAlgorithms
+                            .contains(_handshakeAlgo)
+                        ? _handshakeAlgo
+                        : HandshakeResponseResolver.algoPassWord2,
+                    dropdownColor: const Color(0xFF1E1E1E),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: Colors.white.withOpacity(0.05),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                    ),
+                    items: HandshakeResponseResolver.supportedAlgorithms
+                        .map((algo) => DropdownMenuItem(
+                              value: algo,
+                              child: Text(algo),
+                            ))
+                        .toList(),
+                    onChanged: _saveHandshakeAlgo,
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    "Warning: Changing this manualy will force the machine to use the selected protocol for decryption.",
+                    style: TextStyle(color: Colors.grey, fontSize: 11),
+                  ),
+                  const SizedBox(height: 40),
                 ],
               ),
             ),

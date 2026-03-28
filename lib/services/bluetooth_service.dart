@@ -174,7 +174,7 @@ class CutterBluetoothService {
         upper.startsWith('DX') ||
         upper.startsWith('LH')) {
       await cacheSuccessfulHandshake(
-        'HANDSHAKE_NEW',
+        'DQ_HANDSHAKE',
         false,
         mode: 'heuristic',
         persist: false,
