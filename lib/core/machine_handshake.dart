@@ -52,8 +52,9 @@ class MachineHandshake {
   static const int _maxChallengeRetriesPerAlgorithm = 1;
   static const Duration _challengeTimeout = Duration(milliseconds: 1400);
   static const Duration _authAckTimeout = Duration(milliseconds: 900);
-  static const Duration _mechanicVerificationTimeout =
-      Duration(milliseconds: 1800);
+  static const Duration _mechanicVerificationTimeout = Duration(
+    milliseconds: 1800,
+  );
 
   MachineHandshake(
     this._bluetooth, {
@@ -188,7 +189,8 @@ class MachineHandshake {
   }
 
   void _processMessage(String message) {
-    if (_awaitingMechanicVerification && _isMechanicVerificationResponse(message)) {
+    if (_awaitingMechanicVerification &&
+        _isMechanicVerificationResponse(message)) {
       _handleMechanicVerificationResponse(message);
       return;
     }
@@ -199,6 +201,10 @@ class MachineHandshake {
     }
 
     if (message.contains('RCMD=12,1')) {
+      if (_currentAlgoIndex >= _algorithms.length) {
+        _advanceRoundOrFinish();
+        return;
+      }
       _tryNextAlgorithm();
       return;
     }
@@ -287,13 +293,19 @@ class MachineHandshake {
     _awaitingAuthAck = false;
     _ackTimer?.cancel();
 
-    final winAlgo = _algorithms[_currentAlgoIndex];
+    final winAlgo =
+        _currentAlgoIndex >= 0 && _currentAlgoIndex < _algorithms.length
+            ? _algorithms[_currentAlgoIndex]
+            : (_bluetooth.successfulHandshakeType ??
+                _bluetooth.cachedAgentType ??
+                HandshakeResponseResolver.algoPassWord2);
     onStatusUpdate('✅ Connected!');
     _bluetooth.cacheSuccessfulHandshake(
       winAlgo,
       true,
       mode: _handshakeMode,
       persist: _persistOnSuccess,
+      markSessionAuthenticated: true,
     );
 
     _finish(true);

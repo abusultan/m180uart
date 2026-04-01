@@ -75,6 +75,12 @@ class ApiService {
   late Dio _dio;
   String? _token;
   User? _currentUser;
+  bool _isRockspaceMode = false;
+  bool get isRockspaceMode => _isRockspaceMode;
+
+  void setRockspaceMode(bool value) {
+    _isRockspaceMode = value;
+  }
 
   void _configureHttpClientAdapter() {
     const allowBadCerts =

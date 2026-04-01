@@ -2,6 +2,32 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
 
+class CutPayloadPreparation {
+  const CutPayloadPreparation({
+    required this.bytes,
+    required this.previewData,
+    required this.isSjcFile,
+    required this.maxWidth,
+    required this.shouldNormalizeSjc,
+    required this.keepsOriginalSjcPrefix,
+    required this.rebasedWideSjcToOrigin,
+    required this.rebasedPltToOrigin,
+    required this.appliedAngle,
+    required this.appliedMirror,
+  });
+
+  final List<int> bytes;
+  final CutPathData? previewData;
+  final bool isSjcFile;
+  final int? maxWidth;
+  final bool shouldNormalizeSjc;
+  final bool keepsOriginalSjcPrefix;
+  final bool rebasedWideSjcToOrigin;
+  final bool rebasedPltToOrigin;
+  final bool appliedAngle;
+  final bool appliedMirror;
+}
+
 class CutFileTransformer {
   static const String _legacyNarrowOutputMapping = '6240092912';
   static const Map<String, String> _legacyNarrowDigitMap = {
@@ -41,6 +67,12 @@ class CutFileTransformer {
     String text;
     try {
       text = latin1.decode(inputBytes);
+      // FORCED PEN-UP: Sunshine Vertical machines MANDATE a U0,0 (Pen-Up) at start.
+      // If the file doesn't have it, the machine interprets the first move as a DRAG 
+      // from the last known physical position, causing the vertical offset.
+      if (text.contains('U0,0')) {
+        return inputBytes;
+      }
     } catch (_) {
       return inputBytes;
     }
@@ -183,6 +215,262 @@ class CutFileTransformer {
       ...tokens.skip(removeUntil),
     ];
     return latin1.encode('${rebuiltTokens.join(' ')} ');
+  }
+
+  static CutPayloadPreparation prepareForMachine({
+    required List<int> inputBytes,
+    int? maxWidth,
+    double angleDegrees = 0,
+    bool autoMirror = false,
+    bool preferOriginAlignedBackCut = false,
+    bool isSunshineMachine = false,
+  }) {
+    var preparedBytes = List<int>.from(inputBytes);
+    final isSjcFile = isSjcBytes(preparedBytes);
+    final isPltFile = !isSjcFile && isPltBytes(preparedBytes);
+    final shouldNormalizeSjc =
+        isSjcFile && maxWidth != null && maxWidth > 0 && maxWidth < 160;
+    final keepsOriginalSjcPrefix = isSjcFile && !shouldNormalizeSjc && !isSunshineMachine;
+    bool rebasedWideSjcToOrigin = false;
+    bool rebasedPltToOrigin = false;
+
+    // MANDATORY ALIGNMENT & PEN-UP FOR ALL MACHINES
+    // We force this for every cut in the UART context because machines (especially Sunshine V9)
+    // mandate a U0,0 (Pen-Up to origin) at the start to avoid interpreting the first move 
+    // as a DRAG from the last position.
+    
+    // 1. Rebase coordinates to (0,0) to remove internal file offsets
+    final rebasedBytes = rebaseWideSjcToOriginIfNeeded(
+      inputBytes: preparedBytes,
+    );
+    rebasedWideSjcToOrigin = !_listsEqual(rebasedBytes, preparedBytes);
+    preparedBytes = rebasedBytes;
+
+    // 2. Inject U0,0 (Pen-Up to origin) before any cut commands
+    preparedBytes = ensureStartsWithPenUp(preparedBytes);
+
+    if (preferOriginAlignedBackCut && isPltFile) {
+      final pltRebasedBytes = rebasePltToOriginIfNeeded(inputBytes: preparedBytes);
+      rebasedPltToOrigin = !_listsEqual(pltRebasedBytes, preparedBytes);
+      preparedBytes = pltRebasedBytes;
+    }
+
+    if (preferOriginAlignedBackCut && isPltFile) {
+      final rebasedBytes = rebasePltToOriginIfNeeded(inputBytes: preparedBytes);
+      rebasedPltToOrigin = !_listsEqual(rebasedBytes, preparedBytes);
+      preparedBytes = rebasedBytes;
+    }
+
+    final appliedAngle = isSjcFile && angleDegrees != 0;
+    if (appliedAngle) {
+      preparedBytes = applyAngleToBytes(
+        inputBytes: preparedBytes,
+        angleDegrees: angleDegrees,
+      );
+    }
+
+    final appliedMirror = autoMirror && isSjcFile;
+    if (autoMirror) {
+      preparedBytes = applyMirrorToBytes(inputBytes: preparedBytes);
+    }
+
+    if (shouldNormalizeSjc || isSunshineMachine) {
+      // THE STABILIZER: For Sunshine Vertical, we MUST use a known stable mapping.
+      // Rebuilding the file with 'rebuildSjcForNarrowLegacyCutter' forces the 
+      // 6240092912 mapping, which is the native language of the V9 large machines.
+      preparedBytes = rebuildSjcForNarrowLegacyCutter(
+        inputBytes: preparedBytes,
+      );
+    }
+
+    return CutPayloadPreparation(
+      bytes: preparedBytes,
+      previewData: decodePathData(preparedBytes),
+      isSjcFile: isSjcFile,
+      maxWidth: maxWidth,
+      shouldNormalizeSjc: shouldNormalizeSjc,
+      keepsOriginalSjcPrefix: keepsOriginalSjcPrefix,
+      rebasedWideSjcToOrigin: rebasedWideSjcToOrigin,
+      rebasedPltToOrigin: rebasedPltToOrigin,
+      appliedAngle: appliedAngle,
+      appliedMirror: appliedMirror,
+    );
+  }
+
+  static List<int> rebasePltToOriginIfNeeded({required List<int> inputBytes}) {
+    String text;
+    try {
+      text = latin1.decode(inputBytes);
+    } catch (_) {
+      return inputBytes;
+    }
+
+    if (!(text.contains('PU') || text.contains('PD') || text.contains('PA'))) {
+      return inputBytes;
+    }
+
+    final commands = text.split(';');
+    double? minX;
+    double? minY;
+
+    Offset? readCoords(String command) {
+      final trimmed = command.trim();
+      if (trimmed.length < 2) return null;
+      final prefix = trimmed.substring(0, 2);
+      if (prefix != 'PU' && prefix != 'PD' && prefix != 'PA') {
+        return null;
+      }
+      final coords = trimmed.substring(2).trim();
+      if (coords.isEmpty) return null;
+      return _parsePltCoords(coords);
+    }
+
+    for (final command in commands) {
+      final point = readCoords(command);
+      if (point == null) continue;
+      minX = minX == null ? point.dx : min(minX, point.dx);
+      minY = minY == null ? point.dy : min(minY, point.dy);
+    }
+
+    if (minX == null || minY == null || (minX == 0 && minY == 0)) {
+      return inputBytes;
+    }
+
+    final rebuilt = commands
+        .map((command) {
+          final trimmed = command.trim();
+          if (trimmed.length < 2) return command;
+          final prefix = trimmed.substring(0, 2);
+          if (prefix != 'PU' && prefix != 'PD' && prefix != 'PA') {
+            return command;
+          }
+          final coords = trimmed.substring(2).trim();
+          if (coords.isEmpty) return command;
+          final point = _parsePltCoords(coords);
+          if (point == null) return command;
+          final shiftedX = point.dx - minX!;
+          final shiftedY = point.dy - minY!;
+          return '$prefix${_formatPltNumber(shiftedX)},${_formatPltNumber(shiftedY)}';
+        })
+        .join(';');
+
+    return latin1.encode(rebuilt);
+  }
+
+  static String _formatPltNumber(double value) {
+    final rounded = value.roundToDouble();
+    if ((value - rounded).abs() < 0.0001) {
+      return rounded.toInt().toString();
+    }
+    return value.toStringAsFixed(3).replaceFirst(RegExp(r'\.?0+$'), '');
+  }
+
+  static List<int> rebaseWideSjcToOriginIfNeeded({
+    required List<int> inputBytes,
+  }) {
+    String text;
+    try {
+      text = latin1.decode(inputBytes);
+    } catch (_) {
+      return inputBytes;
+    }
+
+    final trimmed = text.trim();
+    if (!trimmed.contains('WSJP=')) {
+      return inputBytes;
+    }
+
+    final normalized = trimmed
+        .replaceAll('IN ', '')
+        .replaceAll(' @', '')
+        .trim();
+    final parts = normalized.split(RegExp(r'\s+'));
+    if (parts.isEmpty) return inputBytes;
+
+    final header = parts.first;
+    if (!header.contains('WSJP=')) return inputBytes;
+
+    final mappingStr = header.replaceAll('WSJP=', '');
+    final mapping = _buildMapping(mappingStr);
+    if (mapping == null || mapping.length != 10) return inputBytes;
+
+    final tokens = List<String>.from(parts);
+    final decodedPoints = <_PointToken>[];
+
+    for (int i = 1; i < tokens.length; i++) {
+      final token = tokens[i];
+      final split = token.split(',');
+      if (split.length != 2) continue;
+
+      final xPart = split[0];
+      final yPart = split[1];
+      final xPrefix = _prefixOf(xPart);
+      final yPrefix = _prefixOf(yPart);
+      final xDecoded = _decodeNumber(_stripPrefix(xPart), mapping);
+      final yDecoded = _decodeNumber(_stripPrefix(yPart), mapping);
+      if (xDecoded == null || yDecoded == null) continue;
+
+      final xVal = int.tryParse(xDecoded);
+      final yVal = int.tryParse(yDecoded);
+      if (xVal == null || yVal == null) continue;
+
+      decodedPoints.add(
+        _PointToken(
+          index: i,
+          x: xVal,
+          y: yVal,
+          xPrefix: xPrefix,
+          yPrefix: yPrefix,
+        ),
+      );
+    }
+
+    if (decodedPoints.isEmpty) {
+      return inputBytes;
+    }
+
+    int? minX;
+    int? minY;
+    for (final point in decodedPoints) {
+      if (point.x == 0 && point.y == 0) {
+        continue;
+      }
+      minX = minX == null ? point.x : min(minX, point.x);
+      minY = minY == null ? point.y : min(minY, point.y);
+    }
+
+    if (minX == null || minY == null || (minX == 0 && minY == 0)) {
+      return inputBytes;
+    }
+
+    for (final point in decodedPoints) {
+      if (point.x == 0 && point.y == 0) {
+        continue;
+      }
+      point.x -= minX;
+      point.y -= minY;
+      
+      // ABSOLUTE PROTECTION: Ensure coordinates never clip negative (this causes vertical shifts on large machines)
+      if (point.x < 0) point.x = 0;
+      if (point.y < 0) point.y = 0;
+
+      final xEncoded = _encodeNumber(point.x.toString(), mapping);
+      final yEncoded = _encodeNumber(point.y.toString(), mapping);
+      tokens[point.index] =
+          '${point.xPrefix}$xEncoded,${point.yPrefix}$yEncoded';
+    }
+
+    final rebuilt = 'IN ${tokens.join(' ')} @ ';
+    return latin1.encode(rebuilt);
+  }
+
+  static bool _listsEqual(List<int> a, List<int> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   static CutPathData? decodePathData(List<int> inputBytes) {
@@ -397,10 +685,8 @@ class CutFileTransformer {
       return inputBytes;
     }
 
-    final normalized = trimmed
-        .replaceAll('IN ', '')
-        .replaceAll(' @', '')
-        .trim();
+    final normalized =
+        trimmed.replaceAll('IN ', '').replaceAll(' @', '').trim();
     final parts = normalized.split(RegExp(r'\s+'));
     if (parts.isEmpty) return inputBytes;
 
@@ -483,10 +769,8 @@ class CutFileTransformer {
       return inputBytes;
     }
 
-    final normalized = trimmed
-        .replaceAll('IN ', '')
-        .replaceAll(' @', '')
-        .trim();
+    final normalized =
+        trimmed.replaceAll('IN ', '').replaceAll(' @', '').trim();
     final parts = normalized.split(RegExp(r'\s+'));
     if (parts.isEmpty) return inputBytes;
 
@@ -567,12 +851,9 @@ class CutFileTransformer {
 
   /// Rebuilds SJC data for narrow legacy cutters (<160mm max width).
   ///
-  /// This matches the legacy Android app behavior:
-  /// 1. Decode the original coordinates using the source mapping.
-  /// 2. Drop initial origin calibration tokens.
-  /// 3. Rebase the design to the minimum X/Y.
-  /// 4. Emit the legacy fixed `WSJP=6240092912` mapping.
-  /// 5. Start and end with a pen-up move to origin.
+  /// This matches `DeviceDetailActivity.e(str)` in the original Android app:
+  /// decode the original coordinates, skip origin calibration markers inline,
+  /// rebase to the minimum X/Y, and emit the fixed legacy mapping.
   static List<int> rebuildSjcForNarrowLegacyCutter({
     required List<int> inputBytes,
   }) {
@@ -588,10 +869,8 @@ class CutFileTransformer {
       return inputBytes;
     }
 
-    final normalized = trimmed
-        .replaceAll('IN ', '')
-        .replaceAll(' @', '')
-        .trim();
+    final normalized =
+        trimmed.replaceAll('IN ', '').replaceAll(' @', '').trim();
     final parts = normalized.split(RegExp(r'\s+'));
     if (parts.isEmpty) return inputBytes;
 
@@ -617,9 +896,11 @@ class CutFileTransformer {
       if (split.length != 2) continue;
 
       final prefix = _prefixOf(split[0]);
-      if (prefix == 'U' || currentSegment == null) {
+      if (prefix == 'U') {
         currentSegment = <_LegacyCutPoint>[];
         segments.add(currentSegment);
+      } else {
+        currentSegment ??= <_LegacyCutPoint>[];
       }
 
       final xDecoded = _decodeNumber(_stripPrefix(split[0]), mapping);
@@ -641,7 +922,6 @@ class CutFileTransformer {
       }
 
       currentSegment.add(_LegacyCutPoint(x: xVal, y: yVal));
-
       minX = minX == null ? xVal : min(minX, xVal);
       maxX = maxX == null ? xVal : max(maxX, xVal);
       minY = minY == null ? yVal : min(minY, yVal);
@@ -659,7 +939,6 @@ class CutFileTransformer {
       'IN WSJP=$_legacyNarrowOutputMapping FSIZE$height,$width; ',
     );
 
-    // Match the legacy Android app by explicitly starting from origin.
     buffer.write('U$zero,$zero ');
     buffer.write('D$zero,$zero ');
 
@@ -667,16 +946,12 @@ class CutFileTransformer {
       if (segment.isEmpty) continue;
       for (int i = 0; i < segment.length; i++) {
         final point = segment[i];
-        final encodedPrimary = _encodeLegacyNarrowNumber(
-          (point.y - minY).toString(),
-        );
-        final encodedSecondary = _encodeLegacyNarrowNumber(
-          (point.x - minX).toString(),
-        );
+        final encodedX = _encodeLegacyNarrowNumber((point.x - minX).toString());
+        final encodedY = _encodeLegacyNarrowNumber((point.y - minY).toString());
         if (i == 0) {
-          buffer.write('U$encodedPrimary,$encodedSecondary ');
+          buffer.write('U$encodedX,$encodedY ');
         }
-        buffer.write('D$encodedPrimary,$encodedSecondary ');
+        buffer.write('D$encodedX,$encodedY ');
       }
     }
 

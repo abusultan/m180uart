@@ -1,16 +1,18 @@
-import 'dart:io';
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
+
 import 'package:flutter/material.dart';
+
+import '../../core/app_strings.dart';
+import '../../core/cut_file_transformer.dart';
+import '../../core/machine_handshake.dart';
+import '../../data/models/product_models.dart';
 import '../../services/api_service.dart';
 import '../../services/bluetooth_service.dart';
-import '../../data/models/product_models.dart';
-import '../../core/machine_handshake.dart';
-import 'scan_screen.dart';
-import '../../core/app_strings.dart';
 import '../../services/cut_settings_service.dart';
-import '../../core/cut_file_transformer.dart';
 import 'cut_settings_screen.dart' as cut_settings_ui;
+import 'scan_screen.dart';
 import '../widgets/svg_renderer_widget.dart';
 
 class DeviceDetailScreen extends StatefulWidget {
@@ -36,7 +38,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   String? _previewVisualUrl;
   bool _previewVisualIsSvg = false;
   bool _isCutting = false;
-  bool _isDownloading = false;
+  final bool _isDownloading = false;
   String _status = "";
   File? _cutFile;
   bool _didInitLocalizedStatus = false;
@@ -58,6 +60,14 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
 
   void _checkConnection() {
     if (mounted) setState(() {});
+  }
+
+  String _normalizeHandshakeLabel(String? raw) {
+    return (raw ?? '')
+        .trim()
+        .toUpperCase()
+        .replaceAll('-', '_')
+        .replaceAll(' ', '_');
   }
 
   Future<String> _resolveCutSettingsScope() async {
@@ -100,38 +110,28 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     }
 
     try {
-      final isPltMachine = _usesPltFormat();
-
-      String url = '';
-      if (isPltMachine) {
-        url = widget.productItem!.pltUrl.isNotEmpty
-            ? widget.productItem!.pltUrl
-            : widget.productItem!.sjcUrl;
-      } else {
-        url = widget.productItem!.sjcUrl.isNotEmpty
-            ? widget.productItem!.sjcUrl
-            : widget.productItem!.pltUrl;
-      }
-
+      String url = _resolveCutFileUrl();
       url = ApiService().normalizeUrl(url);
 
       if (url.isEmpty ||
           url.endsWith('/storage') ||
           url.endsWith('/storage/')) {
-        if (mounted)
+        if (mounted) {
           setState(() {
             _previewLoading = false;
           });
+        }
         return;
       }
 
       final file = await ApiService().downloadFile(url);
       if (file == null) {
-        if (mounted)
+        if (mounted) {
           setState(() {
             _previewLoading = false;
             _previewFailed = true;
           });
+        }
         return;
       }
 
@@ -146,11 +146,11 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         });
         return;
       }
-      final isSjcFile = CutFileTransformer.isSjcBytes(rawBytes);
-      final bytes = isSjcFile
-          ? CutFileTransformer.filterOriginCalibrationMarks(rawBytes)
-          : rawBytes;
-      final data = CutFileTransformer.decodePathData(bytes);
+
+      final preparation = await _prepareCutPayload(
+        allowMaxWidthRequest: _bluetooth.isConnected,
+      );
+      final data = preparation?.previewData;
 
       if (!mounted) return;
 
@@ -161,7 +161,9 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         return;
       }
 
-      final rotated = (_angleEnabled && _angleValue != 0)
+      final rotated = (_angleEnabled &&
+              _angleValue != 0 &&
+              !(preparation?.appliedAngle ?? false))
           ? CutFileTransformer.rotatePathData(data, -_angleValue)
           : data;
 
@@ -171,13 +173,20 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         _previewData = rotated;
         _previewLoading = false;
       });
-    } catch (e) {
-      if (mounted)
+    } catch (_) {
+      if (mounted) {
         setState(() {
           _previewLoading = false;
           _previewFailed = true;
         });
+      }
     }
+  }
+
+  String _resolveCutFileUrl() {
+    final item = widget.productItem;
+    if (item == null) return '';
+    return item.resolveCutFileUrl(prefersPltFormat: _usesPltFormat());
   }
 
   bool _usesPltFormat() {
@@ -194,7 +203,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   bool get _isMirroredMachine {
     final serial = _bluetooth.serialNumber?.toUpperCase() ?? '';
     final agent = _normalizedAgentType();
-    bool isException = serial.startsWith("DQ") ||
+    final isException = serial.startsWith("DQ") ||
         serial.startsWith("DX") ||
         serial.startsWith("LH") ||
         serial.startsWith("DH") ||
@@ -273,10 +282,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
             child: Directionality(
               textDirection: TextDirection.ltr,
               child: isSvg
-                  ? SvgRenderer(
-                      url: normalizedUrl,
-                      isCutLine: true,
-                    )
+                  ? SvgRenderer(url: normalizedUrl, isCutLine: true)
                   : Image.network(
                       normalizedUrl,
                       fit: BoxFit.contain,
@@ -380,11 +386,21 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       );
       return;
     }
-    _executeCut();
+    await _executeCut();
   }
 
   Future<void> _executeCut() async {
     if (_isCutting) return;
+
+    final handshakeFailedMessage = AppStrings.of(
+      context,
+      'error_handshake_failed',
+    );
+    final fileNotFoundMessage = AppStrings.of(context, 'status_file_not_found');
+    final notEnoughPiecesMessage = AppStrings.of(
+      context,
+      'error_not_enough_pieces',
+    );
 
     if (_cutFile == null) {
       setState(
@@ -404,6 +420,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       _status = AppStrings.of(context, 'status_verifying_balance');
     });
 
+    bool restoreAutoHandshake = false;
     try {
       final productIdForDecrement =
           widget.productItem?.productId ?? widget.productItem?.id ?? 0;
@@ -412,76 +429,91 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       }
 
       int? cutterIdForDecrement;
-      final serialNumber = _bluetooth.serialNumber ?? '';
-      if (serialNumber.isNotEmpty) {
-        cutterIdForDecrement = await ApiService().getCutterIdBySerialNumber(
-          serialNumber,
-        );
-      }
-
-      final decrementResult = await ApiService().decrementRemainingPieces(
-        productId: productIdForDecrement,
-        cutterId: cutterIdForDecrement,
-      );
-      if (decrementResult['success'] != true) {
-        final msg = decrementResult['message']?.toString() ??
-            AppStrings.of(context, 'error_not_enough_pieces');
-        if (mounted) {
-          setState(() {
-            _status = msg;
-            _isCutting = false;
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(msg), backgroundColor: Colors.red),
-          );
-        }
-        return;
+      final settingsScope = await _resolveCutSettingsScope();
+      final isSunshineScope = settingsScope == CutSettingsService.scopeSunshine;
+      if (isSunshineScope) {
+        _bluetooth.setSuppressAutoHandshake(true);
+        _bluetooth.clearPendingRxBuffer();
+        restoreAutoHandshake = true;
       }
 
       setState(() => _status = AppStrings.of(context, 'status_sync_handshake'));
-      bool handshakeSuccess = await _performHandshakeSync();
-      if (!handshakeSuccess)
-        throw Exception(AppStrings.of(context, 'error_handshake_failed'));
+      final handshakeSuccess = isSunshineScope
+          ? await _performSunshineHandshakeSync()
+          : await _performHandshakeSync();
+      if (!handshakeSuccess) {
+        throw Exception(handshakeFailedMessage);
+      }
+
+      final cutSpeed = _defaultSpeed;
+      final cutPressure = _defaultPressure;
+      final activeHandshake = (_bluetooth.successfulHandshakeType ??
+              _bluetooth.cachedAgentType ??
+              '')
+          .trim()
+          .toUpperCase();
+      final shouldPrimeSunshineStandardCutSettings =
+          isSunshineScope && activeHandshake == 'STANDARD';
+      final shouldSendExplicitStartCommand =
+          !(isSunshineScope && activeHandshake == 'STANDARD');
 
       setState(() => _status = AppStrings.of(context, 'status_init_cut'));
-      await _bluetooth.write(";;;");
-      await Future.delayed(const Duration(milliseconds: 500));
-      await _bluetooth.write("BD:110,3;");
-      await Future.delayed(const Duration(milliseconds: 2000));
-      final settingsScope = await _resolveCutSettingsScope();
-      if (settingsScope != CutSettingsService.scopeGeneric) {
-        await _bluetooth.sendMachineSpeed(_defaultSpeed);
+      if (!isSunshineScope) {
+        await _bluetooth.write(";;;");
+        await Future.delayed(const Duration(milliseconds: 500));
+        await _bluetooth.write("BD:110,3;");
+        await Future.delayed(const Duration(milliseconds: 2000));
+      }
+
+      if (settingsScope != CutSettingsService.scopeGeneric &&
+          !isSunshineScope) {
+        await _bluetooth.sendMachineSpeed(cutSpeed);
         await Future.delayed(const Duration(milliseconds: 120));
-        await _bluetooth.sendMachinePressure(_defaultPressure);
-      } else {
-        await _bluetooth.write("BD:4,$_defaultSpeed;");
-        await _bluetooth.write("BD:3,$_defaultPressure;");
+        await _bluetooth.sendMachinePressure(cutPressure);
+      } else if (shouldPrimeSunshineStandardCutSettings) {
+        await _bluetooth.write(
+          ';BD:100,10,$cutPressure;BD:101,9;',
+          packetDelayMs: 40,
+        );
+        await Future.delayed(const Duration(milliseconds: 150));
+        await _bluetooth.write(
+          ';BD:100,11,$cutSpeed;BD:101,9;',
+          packetDelayMs: 40,
+        );
+        await Future.delayed(const Duration(milliseconds: 200));
+      } else if (!isSunshineScope) {
+        await _bluetooth.write("BD:4,$cutSpeed;");
+        await _bluetooth.write("BD:3,$cutPressure;");
       }
 
       setState(() => _status = AppStrings.of(context, 'status_sending_data'));
-      List<int> bytesToSend = await _cutFile!.readAsBytes();
-      final bool isSjcFile = CutFileTransformer.isSjcBytes(bytesToSend);
-      if (isSjcFile) {
-        bytesToSend = CutFileTransformer.filterOriginCalibrationMarks(
-          bytesToSend,
-        );
+      final preparation = await _prepareCutPayload(allowMaxWidthRequest: true);
+      if (preparation == null) {
+        throw Exception(fileNotFoundMessage);
       }
-      if (isSjcFile && _angleEnabled && _angleValue != 0)
-        bytesToSend = CutFileTransformer.applyAngleToBytes(
-          inputBytes: bytesToSend,
-          angleDegrees: _angleValue,
-        );
-      if (_shouldAutoMirrorBytes(bytesToSend))
-        bytesToSend = CutFileTransformer.applyMirrorToBytes(
-          inputBytes: bytesToSend,
-        );
+      final bytesToSend = preparation.bytes;
+
+      debugPrint(
+        'UART cut normalization: maxWidth=${preparation.maxWidth} '
+        'settingsScope=$settingsScope '
+        'usesPlt=${_usesPltFormat()} '
+        'isSjc=${preparation.isSjcFile} '
+        'autoMirror=${preparation.appliedMirror} '
+        'angle=${preparation.appliedAngle} '
+        'normalize=${preparation.shouldNormalizeSjc} '
+        'rebaseWide=${preparation.rebasedWideSjcToOrigin} '
+        'rebasePlt=${preparation.rebasedPltToOrigin} '
+        'keepOriginalSjcPrefix=${preparation.keepsOriginalSjcPrefix}',
+      );
+
+      await Future.delayed(const Duration(milliseconds: 300));
 
       const int chunkSize = 2048;
       const int firstChunkSize = 256;
       int offset = 0;
       while (offset < bytesToSend.length) {
         final currentChunkSize = offset == 0 ? firstChunkSize : chunkSize;
-        int end = (offset + currentChunkSize > bytesToSend.length)
+        final end = (offset + currentChunkSize > bytesToSend.length)
             ? bytesToSend.length
             : offset + currentChunkSize;
         await _bluetooth.writeBytes(
@@ -493,58 +525,288 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         offset = end;
       }
 
-      await Future.delayed(const Duration(milliseconds: 1000));
+      Future<Map<String, dynamic>> decrementRemainingPieces() async {
+        final serialNumber = _bluetooth.serialNumber ?? '';
+        if (serialNumber.isNotEmpty) {
+          cutterIdForDecrement = await ApiService().getCutterIdBySerialNumber(
+            serialNumber,
+          );
+        }
+        return ApiService().decrementRemainingPieces(
+          productId: productIdForDecrement,
+          cutterId: cutterIdForDecrement,
+        );
+      }
+
+      if (!isSunshineScope) {
+        setState(
+          () => _status = AppStrings.of(context, 'status_verifying_balance'),
+        );
+        final decrementResult = await decrementRemainingPieces();
+        if (decrementResult['success'] != true) {
+          final msg =
+              decrementResult['message']?.toString() ?? notEnoughPiecesMessage;
+          if (mounted) {
+            setState(() {
+              _status = msg;
+              _isCutting = false;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(msg), backgroundColor: Colors.red),
+            );
+          }
+          return;
+        }
+      }
+
+      await Future.delayed(
+        Duration(milliseconds: isSunshineScope ? 150 : 1000),
+      );
       setState(() => _status = AppStrings.of(context, 'status_starting_cut'));
-      await _bluetooth.write("BD:100,13;");
+      if (isSunshineScope) {
+        _bluetooth.clearPendingRxBuffer();
+      }
+      if (shouldSendExplicitStartCommand) {
+        await _bluetooth.write(
+          "BD:100,13;",
+          packetDelayMs: isSunshineScope ? 40 : 20,
+        );
+      }
+
+      if (isSunshineScope) {
+        unawaited(() async {
+          final decrementResult = await decrementRemainingPieces();
+          if (decrementResult['success'] != true) {
+            debugPrint(
+              'Sunshine decrement failed after cut start: ${decrementResult['message']}',
+            );
+          }
+        }());
+      }
+
+      final cutCompleted = await _waitForMachineCutCompletion(
+        gracePeriod:
+            isSunshineScope ? const Duration(seconds: 2) : Duration.zero,
+        requireStartAck: isSunshineScope,
+      );
+      if (cutCompleted) {
+        if (!mounted) return;
+        setState(() => _status = AppStrings.of(context, 'status_cut_complete'));
+        await Future.delayed(const Duration(seconds: 2));
+      }
+
+      if (!mounted) return;
       setState(() {
         _status = AppStrings.of(context, 'status_cut_complete');
         _isCutting = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(AppStrings.of(context, 'msg_cut_success')),
+        const SnackBar(
+          content: Text('تم القص بنجاح'),
           backgroundColor: Color(0xFF00FF88),
         ),
       );
       if (mounted) Navigator.pop(context);
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _status = "Error: $e";
           _isCutting = false;
         });
+      }
+    } finally {
+      if (restoreAutoHandshake) {
+        _bluetooth.setSuppressAutoHandshake(false);
+      }
     }
   }
 
   Future<bool> _performHandshakeSync() async {
-    final serial = (_bluetooth.serialNumber ?? '').trim();
-
-    String? preferred = MachineHandshake.normalizeAlgorithm(
-      _bluetooth.successfulHandshakeType,
-    );
-    if ((preferred == null || preferred.isEmpty) && serial.isNotEmpty) {
-      preferred = MachineHandshake.normalizeAlgorithm(
-        await _bluetooth.getCachedHandshake(serial),
-      );
+    if (_bluetooth.isBypassMode) {
+      return true;
     }
 
+    final reusableAlgorithm = await _bluetooth.getReusableHandshakeAlgorithm();
+    final preferredSuccess = await _runHandshakeAttempt(
+      forcedAlgorithm: reusableAlgorithm,
+      handshakeMode: reusableAlgorithm != null ? "cached" : "auto",
+    );
+    if (preferredSuccess || reusableAlgorithm == null) {
+      return preferredSuccess;
+    }
+
+    return _runHandshakeAttempt();
+  }
+
+  Future<bool> _performSunshineHandshakeSync() async {
+    if (_bluetooth.isBypassMode) {
+      return true;
+    }
+
+    final serial =
+        _bluetooth.serialNumber ?? _bluetooth.systemInfo.serialNumber ?? '';
+    String? preferredAlgorithm;
+
+    if (serial.isNotEmpty && !_bluetooth.isUsingPidFallback) {
+      final backendHandshake = await ApiService().getDeviceBySerialNumber(
+        serial,
+      );
+      final normalizedBackend = _normalizeHandshakeLabel(backendHandshake);
+      if (normalizedBackend.isNotEmpty) {
+        preferredAlgorithm = normalizedBackend;
+        await _bluetooth.cacheSuccessfulHandshake(
+          normalizedBackend,
+          false,
+          mode: 'api',
+          persist: false,
+        );
+      }
+    }
+
+    preferredAlgorithm ??= await _bluetooth.getReusableHandshakeAlgorithm(
+      serial.isEmpty ? null : serial,
+    );
+
+    if (preferredAlgorithm != null && preferredAlgorithm.isNotEmpty) {
+      final preferredSuccess = await _runHandshakeAttempt(
+        forcedAlgorithm: preferredAlgorithm,
+        handshakeMode: 'manual',
+      );
+      if (preferredSuccess) {
+        return true;
+      }
+    }
+
+    return _runHandshakeAttempt();
+  }
+
+  Future<bool> _runHandshakeAttempt({
+    String? forcedAlgorithm,
+    String handshakeMode = "auto",
+  }) async {
     final completer = Completer<bool>();
     final handshake = MachineHandshake(
       _bluetooth,
-      preferredAlgorithm: preferred,
-      handshakeMode: 'sync',
-      persistOnSuccess: true,
-      onStatusUpdate: (s) => setState(() => _status = s),
-      onHandshakeComplete: (s) => completer.complete(s),
+      onStatusUpdate: (s) {
+        if (!mounted) return;
+        setState(() => _status = s);
+      },
+      onHandshakeComplete: (s) {
+        if (!completer.isCompleted) {
+          completer.complete(s);
+        }
+      },
+      forcedAlgorithm: forcedAlgorithm,
+      handshakeMode: handshakeMode,
     );
     handshake.startHandshake();
     try {
       return await completer.future.timeout(
-        const Duration(seconds: 20),
+        const Duration(seconds: 15),
         onTimeout: () => false,
       );
     } finally {
       handshake.dispose();
+    }
+  }
+
+  Future<CutPayloadPreparation?> _prepareCutPayload({
+    required bool allowMaxWidthRequest,
+  }) async {
+    final file = _cutFile;
+    if (file == null) {
+      return null;
+    }
+
+    final rawBytes = await file.readAsBytes();
+    final maxWidth = await _resolveMachineMaxWidth(
+      allowDeviceRequest: allowMaxWidthRequest,
+    );
+    final settingsScope = await _resolveCutSettingsScope();
+    final isSunshineScope = settingsScope == CutSettingsService.scopeSunshine;
+
+    return CutFileTransformer.prepareForMachine(
+      inputBytes: rawBytes,
+      maxWidth: maxWidth,
+      angleDegrees: _angleEnabled ? _angleValue : 0,
+      autoMirror: _shouldAutoMirrorBytes(rawBytes),
+      isSunshineMachine: isSunshineScope,
+    );
+  }
+
+  Future<bool> _waitForMachineCutCompletion({
+    Duration gracePeriod = Duration.zero,
+    bool requireStartAck = false,
+  }) async {
+    final completer = Completer<bool>();
+    final waitStartedAt = DateTime.now();
+    var sawStartAck = !requireStartAck;
+    late final StreamSubscription<String> subscription;
+    subscription = _bluetooth.parsedMessageStream.listen((message) {
+      final normalized = message.trim();
+      if (!sawStartAck && normalized.contains('RCMD=13')) {
+        sawStartAck = true;
+        return;
+      }
+      if (DateTime.now().difference(waitStartedAt) < gracePeriod) {
+        return;
+      }
+      final isCutDone =
+          normalized == 'RCMD=10,0;' || normalized == 'RSTR=10,0;';
+      if (isCutDone && !sawStartAck) {
+        final waitedLongEnough = DateTime.now().difference(waitStartedAt) >=
+            const Duration(seconds: 8);
+        if (!waitedLongEnough) {
+          return;
+        }
+      }
+      if (isCutDone && !completer.isCompleted) {
+        completer.complete(true);
+      }
+    });
+
+    try {
+      return await completer.future.timeout(
+        const Duration(seconds: 90),
+        onTimeout: () => false,
+      );
+    } finally {
+      await subscription.cancel();
+    }
+  }
+
+  Future<int?> _resolveMachineMaxWidth({bool allowDeviceRequest = true}) async {
+    final currentWidth = _bluetooth.systemInfo.maxWidth;
+    if (currentWidth != null && currentWidth > 0) {
+      return currentWidth;
+    }
+
+    final cachedWidth = await _bluetooth.getCachedMaxWidth();
+    if (cachedWidth != null && cachedWidth > 0) {
+      return cachedWidth;
+    }
+
+    if (!allowDeviceRequest || !_bluetooth.isConnected) {
+      return currentWidth ?? cachedWidth;
+    }
+
+    final completer = Completer<int?>();
+    late final StreamSubscription subscription;
+    subscription = _bluetooth.systemInfoStream.listen((info) {
+      final width = info.maxWidth;
+      if (width != null && width > 0 && !completer.isCompleted) {
+        completer.complete(width);
+      }
+    });
+
+    try {
+      await _bluetooth.requestMaxWidth();
+      return await completer.future.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => _bluetooth.systemInfo.maxWidth ?? cachedWidth,
+      );
+    } finally {
+      await subscription.cancel();
     }
   }
 
@@ -684,10 +946,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                       ),
                     ),
                     const SizedBox(width: 16),
-                    Expanded(
-                      flex: 4,
-                      child: details,
-                    ),
+                    Expanded(flex: 4, child: details),
                   ],
                 ),
               );
@@ -700,17 +959,11 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                   Expanded(
                     flex: 7,
                     child: Center(
-                      child: AspectRatio(
-                        aspectRatio: 1.15,
-                        child: previewCard,
-                      ),
+                      child: AspectRatio(aspectRatio: 1.15, child: previewCard),
                     ),
                   ),
                   const SizedBox(height: 20),
-                  Expanded(
-                    flex: 4,
-                    child: details,
-                  ),
+                  Expanded(flex: 4, child: details),
                 ],
               ),
             );
@@ -724,7 +977,9 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
 class StaticCutPainter extends CustomPainter {
   final CutPathData data;
   final Color color;
+
   StaticCutPainter(this.data, {required this.color});
+
   @override
   void paint(Canvas canvas, Size size) {
     final width = (data.maxX - data.minX).abs();

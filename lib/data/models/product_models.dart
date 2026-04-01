@@ -138,6 +138,7 @@ class ProductItem {
   final String nameEn;
   final String imageUrl;
   final String previewUrl;
+  final String legacyFileUrl;
   final String sjcUrl;
   final String pltUrl;
 
@@ -148,6 +149,7 @@ class ProductItem {
     required this.nameEn,
     required this.imageUrl,
     required this.previewUrl,
+    required this.legacyFileUrl,
     required this.sjcUrl,
     required this.pltUrl,
   });
@@ -205,6 +207,7 @@ class ProductItem {
       nameEn: _sanitizeName(json['name_en'] ?? json['name']),
       imageUrl: imageUrl,
       previewUrl: resolvedPreviewUrl,
+      legacyFileUrl: fallbackFileUrl,
       sjcUrl: sjcUrl,
       pltUrl: pltUrl,
     );
@@ -228,12 +231,24 @@ class ProductItem {
 
   String get preferredCutFileUrl {
     final candidates = <String>[
+      legacyFileUrl,
       pltUrl,
       sjcUrl,
       if (_looksLikeSvgUrl(previewUrl)) previewUrl,
     ];
     for (final candidate in candidates) {
       if (candidate.trim().isNotEmpty) return candidate;
+    }
+    return '';
+  }
+
+  String resolveCutFileUrl({required bool prefersPltFormat}) {
+    final candidates = prefersPltFormat
+        ? <String>[pltUrl, legacyFileUrl, sjcUrl]
+        : <String>[legacyFileUrl, sjcUrl, pltUrl];
+
+    for (final candidate in candidates) {
+      if (candidate.trim().isNotEmpty) return candidate.trim();
     }
     return '';
   }
