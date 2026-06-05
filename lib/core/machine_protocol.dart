@@ -114,8 +114,8 @@ class SunshineMachineProtocol extends MachineProtocol {
   List<String> pressureCommands(int pressureLevel) {
     final level = _normalizeSunshineLevel(pressureLevel);
     if (isLegacy) {
-      final legacyForce = ((level - 1) * 15) + 30;
-      return [';BD:100,12,$legacyForce;'];
+      // Original sunshine uses BD:100,10,<value> for knife pressure (ZjConfig.device_param_knife)
+      return [';BD:100,10,$level;'];
     }
     return [';BD:100,10,$level;BD:101,9;'];
   }
@@ -149,6 +149,17 @@ class MachineProtocolResolver {
     isLegacy: true,
   );
 
+  static bool _isDqFamilyAlgorithm(String algorithm) {
+    return algorithm == 'DQ' ||
+        algorithm == 'DX' ||
+        algorithm == 'LH' ||
+        algorithm == 'DQ_HANDSHAKE' ||
+        algorithm == 'MECHANIC_UART' ||
+        algorithm == 'MECHANIC' ||
+        algorithm == 'PASS_U32' ||
+        algorithm == 'DEPASS_U32';
+  }
+
   static MachineProtocol resolve(
     String? agentType, {
     bool isSunshineFamily = false,
@@ -158,7 +169,7 @@ class MachineProtocolResolver {
       return isLegacySunshine ? _sunshineLegacy : _sunshine;
     }
     final algo = (agentType ?? '').trim().toUpperCase();
-    if (algo == 'DQ' || algo == 'DX' || algo == 'LH') {
+    if (_isDqFamilyAlgorithm(algo)) {
       return _dq;
     }
     return _generic;

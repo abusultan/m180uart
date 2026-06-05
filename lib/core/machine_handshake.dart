@@ -49,9 +49,9 @@ class MachineHandshake {
   bool _awaitingMechanicVerification = false;
   bool _mechanicVerificationPassed = false;
   int? _mechanicVerificationSeed;
-  static const int _maxChallengeRetriesPerAlgorithm = 1;
-  static const Duration _challengeTimeout = Duration(milliseconds: 1400);
-  static const Duration _authAckTimeout = Duration(milliseconds: 900);
+  static const int _maxChallengeRetriesPerAlgorithm = 2;
+  static const Duration _challengeTimeout = Duration(milliseconds: 5000);
+  static const Duration _authAckTimeout = Duration(milliseconds: 5000);
   static const Duration _mechanicVerificationTimeout = Duration(
     milliseconds: 1800,
   );
@@ -88,20 +88,22 @@ class MachineHandshake {
 
     onStatusUpdate('Initializing...');
 
-    // Keep the legacy wake-up sequence from the original Android app.
-    _safeWrite(';zxcvvbnmasdfghj;');
-    _schedule(const Duration(milliseconds: 60), () {
-      _safeWrite(';zxcvvbnmasdfgh;');
-    });
+    // Exact sequence from Sunshine WelcomeActivity.initData():
+    // 1. Motherboard check with random 10-digit number
     final mbRandom = List.generate(10, (_) => Random().nextInt(9) + 1).join();
-    _schedule(
-      const Duration(milliseconds: 140),
-      () => _safeWrite('BD:9,83,$mbRandom;'),
-    );
-    _safeWrite(';RCBM;');
-    _schedule(const Duration(milliseconds: 220), () => _safeWrite(';;;RPID;'));
-    _schedule(const Duration(milliseconds: 320), () => _safeWrite(';RMODE;'));
-    _schedule(const Duration(milliseconds: 700), _requestChallenge);
+    _safeWrite('BD:9,83,$mbRandom;');
+
+    // 2. Query device info (same order as original)
+    _schedule(const Duration(milliseconds: 100), () => _safeWrite(';;;RPID;'));
+    _schedule(const Duration(milliseconds: 200), () => _safeWrite(';RSVER;'));
+    _schedule(const Duration(milliseconds: 300), () => _safeWrite(';RHVER;'));
+    _schedule(const Duration(milliseconds: 400), () => _safeWrite(';RMODE;'));
+    _schedule(const Duration(milliseconds: 500), () => _safeWrite(';RPGHEAD;'));
+    _schedule(const Duration(milliseconds: 600), () => _safeWrite(';RCBM;'));
+    _schedule(const Duration(milliseconds: 700), () => _safeWrite('BD:100,20,0;'));
+
+    // 3. Start handshake challenge after device info queries complete
+    _schedule(const Duration(milliseconds: 900), _requestChallenge);
   }
 
   void _resetState() {

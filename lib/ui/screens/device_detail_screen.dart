@@ -112,6 +112,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     try {
       String url = _resolveCutFileUrl();
       url = ApiService().normalizeUrl(url);
+      print('CUT_FILE_URL: $url');
 
       if (url.isEmpty ||
           url.endsWith('/storage') ||
@@ -195,6 +196,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     return serial.startsWith("DQ") ||
         serial.startsWith("DX") ||
         serial.startsWith("LH") ||
+        serial.startsWith("MT") ||
         _isRockspaceAliasSerial(serial) ||
         _isDqFamilyAgent(agent) ||
         agent == "ROCKSPACE_BLUE";
@@ -207,10 +209,16 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         serial.startsWith("DX") ||
         serial.startsWith("LH") ||
         serial.startsWith("DH") ||
+        serial.startsWith("MT") ||
         _isRockspaceAliasSerial(serial) ||
         _isDqFamilyAgent(agent) ||
         agent == "ROCKSPACE_BLUE";
     return !isException;
+  }
+
+  bool get _isMtDqMachine {
+    final serial = _bluetooth.serialNumber?.trim().toUpperCase() ?? '';
+    return serial.startsWith('MT');
   }
 
   String _normalizedAgentType() {
@@ -226,7 +234,14 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   }
 
   bool _isDqFamilyAgent(String agentType) {
-    return agentType == 'DQ' || agentType == 'DX' || agentType == 'LH';
+    return agentType == 'DQ' ||
+        agentType == 'DX' ||
+        agentType == 'LH' ||
+        agentType == 'DQ_HANDSHAKE' ||
+        agentType == 'MECHANIC_UART' ||
+        agentType == 'MECHANIC' ||
+        agentType == 'PASS_U32' ||
+        agentType == 'DEPASS_U32';
   }
 
   bool _isRockspaceAliasSerial(String serial) {
@@ -452,13 +467,16 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
               '')
           .trim()
           .toUpperCase();
+      final useOriginalMtDqCutFlow = !isSunshineScope && _isMtDqMachine;
       final shouldPrimeSunshineStandardCutSettings =
           isSunshineScope && activeHandshake == 'STANDARD';
       final shouldSendExplicitStartCommand =
-          !(isSunshineScope && activeHandshake == 'STANDARD');
+          !isSunshineScope &&
+          !(isSunshineScope && activeHandshake == 'STANDARD') &&
+          !useOriginalMtDqCutFlow;
 
       setState(() => _status = AppStrings.of(context, 'status_init_cut'));
-      if (!isSunshineScope) {
+      if (!isSunshineScope && !useOriginalMtDqCutFlow) {
         await _bluetooth.write(";;;");
         await Future.delayed(const Duration(milliseconds: 500));
         await _bluetooth.write("BD:110,3;");
@@ -508,22 +526,13 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
 
       await Future.delayed(const Duration(milliseconds: 300));
 
-      const int chunkSize = 2048;
-      const int firstChunkSize = 256;
-      int offset = 0;
-      while (offset < bytesToSend.length) {
-        final currentChunkSize = offset == 0 ? firstChunkSize : chunkSize;
-        final end = (offset + currentChunkSize > bytesToSend.length)
-            ? bytesToSend.length
-            : offset + currentChunkSize;
-        await _bluetooth.writeBytes(
-          bytesToSend.sublist(offset, end),
-          forceWithResponse: offset == 0,
-          packetDelayMs: offset == 0 ? 40 : 20,
-        );
-        await Future.delayed(const Duration(milliseconds: 100));
-        offset = end;
-      }
+      // Send the entire file as a single write - exactly like the original
+      // Sunshine app's sendNoBackLimit which writes all bytes at once
+      await _bluetooth.writeBytes(
+        bytesToSend,
+        packetDelayMs: 400,
+        chunkSize: 2048,
+      );
 
       Future<Map<String, dynamic>> decrementRemainingPieces() async {
         final serialNumber = _bluetooth.serialNumber ?? '';

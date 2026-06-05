@@ -1,7 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import '../../services/cut_settings_service.dart';
 import '../../services/bluetooth_service.dart';
+import '../../services/app_settings_service.dart';
 import '../../core/app_strings.dart';
 import '../../core/handshake_response_resolver.dart';
 import 'system_information_screen.dart';
@@ -65,18 +71,36 @@ class CutSettingsScreen extends StatefulWidget {
 }
 
 class _CutSettingsScreenState extends State<CutSettingsScreen> {
+  static const String _updateManifestUrl = 'https://anti-crash.com/version.json';
+  static const String _updateApkUrl = 'https://anti-crash.com/updateuart.apk';
+
   final CutSettingsService _settings = CutSettingsService();
   final CutterBluetoothService _bluetooth = CutterBluetoothService();
+  final AppSettingsService _appSettings = AppSettingsService();
+  final Dio _dio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 20),
+      receiveTimeout: const Duration(minutes: 5),
+      sendTimeout: const Duration(seconds: 20),
+    ),
+  );
   StreamSubscription<String>? _machineDataSub;
   String _machineDataBuffer = '';
 
   bool _loading = true;
+  bool _autoUpdateEnabled = false;
+  bool _updateBusy = false;
+  bool _autoUpdateCheckTriggered = false;
   String _settingsScope = CutSettingsService.scopeGeneric;
   int _speed = CutSettingsService.defaultSpeed;
   int _pressure = CutSettingsService.defaultPressure;
   bool _autoFeed = CutSettingsService.defaultAutoFeed;
   bool _angleEnabled = CutSettingsService.defaultAngleEnabled;
   double _angleValue = CutSettingsService.defaultAngleValue;
+  bool _forceLandscape = false;
+  int _installedVersionCode = 0;
+  String _installedVersionName = '';
+  String? _updateStatus;
   String? _handshakeAlgo;
   int _speedMax = CutSettingsService.maxSpeedForScope(
     CutSettingsService.scopeGeneric,
@@ -158,16 +182,26 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
     final speed = await _settings.getSpeed(scope: settingsScope);
     final pressure = await _settings.getPressure(scope: settingsScope);
     final autoFeed = await _settings.getAutoFeed();
+    final autoUpdateEnabled = await _settings.getAutoUpdateEnabled();
     final angleEnabled = await _settings.getAngleEnabled();
     final angleValue = await _settings.getAngleValue();
+    final forceLandscape = await _settings.getForceLandscape();
+    final installedVersionCode =
+        await _appSettings.getInstalledVersionCode() ?? 0;
+    final installedVersionName =
+        await _appSettings.getInstalledVersionName() ?? '';
     if (!mounted) return;
     setState(() {
       _settingsScope = settingsScope;
       _speed = speed;
       _pressure = pressure;
       _autoFeed = autoFeed;
+      _autoUpdateEnabled = autoUpdateEnabled;
       _angleEnabled = angleEnabled;
       _angleValue = angleValue;
+      _forceLandscape = forceLandscape;
+      _installedVersionCode = installedVersionCode;
+      _installedVersionName = installedVersionName;
       _handshakeAlgo = _bluetooth.cachedAgentType ??
           HandshakeResponseResolver.algoPassWord2;
       _speedMax = CutSettingsService.maxSpeedForScope(settingsScope);
@@ -177,6 +211,10 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
 
     if (settingsScope == CutSettingsService.scopeDq && _bluetooth.isConnected) {
       unawaited(_requestDqSettingsSnapshot());
+    }
+    if (autoUpdateEnabled && !_autoUpdateCheckTriggered) {
+      _autoUpdateCheckTriggered = true;
+      unawaited(_checkForUpdate(autoTriggered: true));
     }
   }
 
@@ -245,6 +283,14 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
     }
   }
 
+  Future<void> _saveAutoUpdateEnabled(bool value) async {
+    setState(() => _autoUpdateEnabled = value);
+    await _settings.setAutoUpdateEnabled(value);
+    if (value) {
+      unawaited(_checkForUpdate(autoTriggered: true));
+    }
+  }
+
   int _ledBrightness = 3;
 
   void _saveLEDBrightness(int value) {
@@ -257,6 +303,178 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
   Future<void> _saveAngleEnabled(bool value) async {
     setState(() => _angleEnabled = value);
     await _settings.setAngleEnabled(value);
+  }
+
+  String _formatInstalledVersion() {
+    final versionName = _installedVersionName.trim().isEmpty
+        ? AppStrings.of(context, 'system_unknown')
+        : _installedVersionName.trim();
+    if (_installedVersionCode > 0) {
+      return '$versionName (${_installedVersionCode.toString()})';
+    }
+    return versionName;
+  }
+
+  void _showUpdateSnack(
+    String message, {
+    Color backgroundColor = const Color(0xFF00FF88),
+  }) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: backgroundColor),
+    );
+  }
+
+  int? _readServerVersionCode(Map<String, dynamic> data) {
+    final candidates = [
+      data['versionCode'],
+      data['version_code'],
+      data['buildNumber'],
+      data['build_number'],
+      data['version'],
+    ];
+    for (final value in candidates) {
+      final parsed = int.tryParse(value?.toString().trim() ?? '');
+      if (parsed != null && parsed > 0) {
+        return parsed;
+      }
+    }
+    return null;
+  }
+
+  String _readServerVersionName(Map<String, dynamic> data) {
+    return (data['versionName']?.toString().trim() ?? '');
+  }
+
+  Future<void> _refreshInstalledVersionInfo() async {
+    final installedVersionCode =
+        await _appSettings.getInstalledVersionCode() ?? 0;
+    final installedVersionName =
+        await _appSettings.getInstalledVersionName() ?? '';
+    if (!mounted) return;
+    setState(() {
+      _installedVersionCode = installedVersionCode;
+      _installedVersionName = installedVersionName;
+    });
+  }
+
+  Future<String> _downloadUpdateApk() async {
+    final directory = await getTemporaryDirectory();
+    final file = File('${directory.path}/updateuart.apk');
+    if (await file.exists()) {
+      await file.delete();
+    }
+    await _dio.download(_updateApkUrl, file.path);
+    return file.path;
+  }
+
+  Future<void> _checkForUpdate({bool autoTriggered = false}) async {
+    if (_updateBusy) return;
+
+    setState(() {
+      _updateBusy = true;
+      _updateStatus = AppStrings.of(context, 'update_checking');
+    });
+
+    try {
+      final response = await _dio.get<dynamic>(_updateManifestUrl);
+      final rawData = response.data;
+      Map<String, dynamic>? data;
+      if (rawData is Map) {
+        data = rawData.map(
+          (key, value) => MapEntry(key.toString(), value),
+        );
+      } else if (rawData is String) {
+        final decoded = jsonDecode(rawData);
+        if (decoded is Map) {
+          data = decoded.map(
+            (key, value) => MapEntry(key.toString(), value),
+          );
+        }
+      }
+
+      if (data == null) {
+        throw Exception(AppStrings.of(context, 'update_invalid_manifest'));
+      }
+      final serverVersionCode = _readServerVersionCode(data);
+      final serverVersionName = _readServerVersionName(data);
+
+      if (serverVersionCode == null) {
+        throw Exception(AppStrings.of(context, 'update_invalid_manifest'));
+      }
+
+      final installedVersionCode =
+          await _appSettings.getInstalledVersionCode() ?? _installedVersionCode;
+
+      if (serverVersionCode <= installedVersionCode) {
+        if (mounted) {
+          setState(() {
+            _installedVersionCode = installedVersionCode;
+            _updateStatus = null;
+          });
+        }
+        if (!autoTriggered) {
+          _showUpdateSnack(
+            AppStrings.of(context, 'update_no_new_version'),
+            backgroundColor: Colors.orange,
+          );
+        }
+        return;
+      }
+
+      if (mounted) {
+        setState(() {
+          _updateStatus =
+              '${AppStrings.of(context, 'update_downloading')} ${serverVersionName.isEmpty ? '' : serverVersionName}'.trim();
+        });
+      }
+
+      final apkPath = await _downloadUpdateApk();
+      final apkIsNewer = await _appSettings.isApkNewerThanInstalled(apkPath);
+      if (!apkIsNewer) {
+        throw Exception(AppStrings.of(context, 'update_apk_not_newer'));
+      }
+
+      if (mounted) {
+        setState(() {
+          _updateStatus = AppStrings.of(context, 'update_ready_installing');
+        });
+      }
+
+      final result = await _appSettings.installApkSilentlyDetailed(apkPath);
+      if (!result.success) {
+        throw Exception(result.message.trim().isEmpty
+            ? 'Silent install failed.'
+            : result.message.trim());
+      }
+
+      if (result.deferred) {
+        _showUpdateSnack(AppStrings.of(context, 'update_started_background'));
+        await _appSettings.closeForBackgroundUpdate();
+        return;
+      }
+
+      await _refreshInstalledVersionInfo();
+      _showUpdateSnack(AppStrings.of(context, 'update_completed_silent'));
+    } catch (e) {
+      final message = AppStrings.of(
+        context,
+        'update_failed',
+      ).replaceAll('{message}', e.toString());
+      _showUpdateSnack(message, backgroundColor: Colors.red);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _updateBusy = false;
+          _updateStatus = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _saveForceLandscape(bool value) async {
+    setState(() => _forceLandscape = value);
+    await _settings.setForceLandscape(value);
   }
 
   Future<void> _saveAngleValue(double value) async {
@@ -329,6 +547,83 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.04),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.white12),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          AppStrings.of(context, 'app_update'),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          AppStrings.of(context, 'installed_version')
+                              .replaceAll('{version}', _formatInstalledVersion()),
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 13,
+                          ),
+                        ),
+                        if (_updateStatus != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            _updateStatus!,
+                            style: const TextStyle(
+                              color: Color(0xFF00FF88),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              AppStrings.of(context, 'auto_update'),
+                              style: const TextStyle(
+                                color: Colors.grey,
+                                fontSize: 14,
+                              ),
+                            ),
+                            Switch(
+                              value: _autoUpdateEnabled,
+                              onChanged: _updateBusy ? null : _saveAutoUpdateEnabled,
+                              activeThumbColor: const Color(0xFF00FF88),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        ElevatedButton(
+                          onPressed: _updateBusy
+                              ? null
+                              : () => _checkForUpdate(autoTriggered: false),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF00FF88),
+                            foregroundColor: Colors.black,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: Text(
+                            AppStrings.of(context, 'check_for_update'),
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
                   OutlinedButton.icon(
                     onPressed: () {
                       Navigator.of(context).push(
@@ -393,6 +688,24 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
                       Switch(
                         value: _angleEnabled,
                         onChanged: _saveAngleEnabled,
+                        activeThumbColor: const Color(0xFF00FF88),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        AppStrings.of(context, 'force_landscape'),
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: 14,
+                        ),
+                      ),
+                      Switch(
+                        value: _forceLandscape,
+                        onChanged: _saveForceLandscape,
                         activeThumbColor: const Color(0xFF00FF88),
                       ),
                     ],

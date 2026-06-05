@@ -32,6 +32,7 @@ class ProductThumbnail extends StatelessWidget {
     final isDqLike = serial.startsWith('DQ') ||
         serial.startsWith('DX') ||
         serial.startsWith('LH') ||
+        serial.startsWith('MT') ||
         (serial.isEmpty && (await bluetooth.getLastMachineIsDQ() ?? false));
 
     if (!isDqLike || productId <= 0) {

@@ -103,6 +103,13 @@ class HandshakeResponseResolver {
     return algorithms;
   }
 
+  /// Sunshine-specific handshake attempt for machines identified as sunshine.
+  /// Matches original WelcomeActivity.handshakeDevice() which tries:
+  /// i=0: getPassWord2, i=1: getOldPassWord, i=2: getPassWord
+  static List<String> resolveSunshineAttemptSequence() {
+    return [algoPassWord2, algoOldPassWord, algoPassWord];
+  }
+
   static int resolveChallengeResponse({
     required String algorithm,
     required int challenge,

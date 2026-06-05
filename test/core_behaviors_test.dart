@@ -25,7 +25,7 @@ void main() {
       expect(output, contains('D6282,489'));
     });
 
-    test('normalizes narrow-machine SJC payload during preparation', () {
+    test('normalizes narrow-machine SJC payload for sunshine only', () {
       final input = latin1.encode(
         'IN WSJP=1029167350 U0,0 D0,0 D0,80 U0,0 D960,0 U6284,467 D6282,489 @',
       );
@@ -33,6 +33,7 @@ void main() {
       final preparation = CutFileTransformer.prepareForMachine(
         inputBytes: input,
         maxWidth: 120,
+        isSunshineMachine: true,
       );
       final output = latin1.decode(preparation.bytes);
 
@@ -46,6 +47,56 @@ void main() {
       expect(preparation.previewData!.minY, 0);
       expect(preparation.previewData!.points.first.dx, 2);
       expect(preparation.previewData!.points.first.dy, 0);
+    });
+
+    test('keeps narrow-machine SJC payload intact for DQ/MT', () {
+      final input = latin1.encode(
+        'IN WSJP=1029167350 U0,0 D0,0 D0,80 U0,0 D960,0 U6284,467 D6282,489 @',
+      );
+
+      final preparation = CutFileTransformer.prepareForMachine(
+        inputBytes: input,
+        maxWidth: 120,
+        isSunshineMachine: false,
+      );
+      final output = latin1.decode(preparation.bytes);
+
+      expect(preparation.shouldNormalizeSjc, isFalse);
+      expect(preparation.keepsOriginalSjcPrefix, isTrue);
+      expect(output, contains('WSJP=1029167350'));
+      expect(output, contains('D0,80'));
+    });
+
+    test('does not inject forced pen-up for non-sunshine DQ/MT files', () {
+      final input = latin1.encode(
+        'IN WSJP=1029167350 D6284,467 D6282,489 @',
+      );
+
+      final preparation = CutFileTransformer.prepareForMachine(
+        inputBytes: input,
+        maxWidth: 195,
+        isSunshineMachine: false,
+      );
+      final output = latin1.decode(preparation.bytes);
+
+      expect(output, isNot(contains('U0,0 D6284,467')));
+      expect(output, contains('WSJP=1029167350'));
+      expect(preparation.rebasedWideSjcToOrigin, isFalse);
+    });
+
+    test('injects forced pen-up only for sunshine files', () {
+      final input = latin1.encode(
+        'IN WSJP=1029167350 D6284,467 D6282,489 @',
+      );
+
+      final preparation = CutFileTransformer.prepareForMachine(
+        inputBytes: input,
+        maxWidth: 195,
+        isSunshineMachine: true,
+      );
+      final output = latin1.decode(preparation.bytes);
+
+      expect(output, contains('U0,0'));
     });
   });
 }

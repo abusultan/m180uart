@@ -72,15 +72,13 @@ class EncryptionUtil {
   static int getHandshakeOldV3(int serverValue) {
     int result = serverValue & MASK_32;
 
-    // result = (((result ^ -2088463848) & 4294967295L) + 1377142310) & 4294967295L;
-    result = (result ^ -2088463848) &
-        MASK_32; // -2088... is valid int in Dart (64bit), cast to 32bit via mask if needed but XOR handles bits.
+    // Java: (result ^ (-2088463848)) & CLSS_4U_MAX
+    // -2088463848 in 32-bit unsigned = 2206503448
+    result = (result ^ 2206503448) & MASK_32;
     result = (result + 1377142310) & MASK_32;
 
-    // result = (result ^ 1145538881) & 4294967295L;
     result = (result ^ 1145538881) & MASK_32;
 
-    // result = (result - 303323001) & 4294967295L;
     result = (result - 303323001) & MASK_32;
 
     return result;
@@ -126,14 +124,16 @@ class EncryptionUtil {
           result = (result + 309809441) & MASK_32;
           result = (result ^ 287852129) & MASK_32;
           result = (result - 556077345) & MASK_32;
-          result = (result ^ -2011081661) & MASK_32;
+          // -2011081661 in unsigned 32-bit = 2283885635
+          result = (result ^ 2283885635) & MASK_32;
           return result;
         } else if (i == 3) {
           // CUTTER
           result = (result + 410472737) & MASK_32;
           result = (result ^ 388515431) & MASK_32;
           result = (result - 589631778) & MASK_32;
-          result = (result ^ -2061413305) & MASK_32;
+          // -2061413305 in unsigned 32-bit = 2233553991
+          result = (result ^ 2233553991) & MASK_32;
           return result;
         }
       }

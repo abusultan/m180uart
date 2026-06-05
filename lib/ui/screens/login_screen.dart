@@ -6,6 +6,7 @@ import '../../core/app_strings.dart';
 import 'register_screen.dart';
 import 'main_screen.dart';
 import 'rep_main_screen.dart';
+import 'wifi_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -47,15 +48,9 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _openWifiSettings() async {
-    final ok = await _appSettings.openWifiSettings(autoReturn: true, timeoutSeconds: 30);
-    if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('تعذر فتح إعدادات الواي فاي'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const WifiScreen()),
+    );
   }
 
   Future<void> _login() async {

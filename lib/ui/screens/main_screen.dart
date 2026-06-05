@@ -139,7 +139,8 @@ class _MainScreenState extends State<MainScreen> {
     final upper = serial.toUpperCase();
     return upper.startsWith('DQ') ||
         upper.startsWith('DX') ||
-        upper.startsWith('LH');
+        upper.startsWith('LH') ||
+        upper.startsWith('MT');
   }
 
   String _defaultMachineTypeFromSerial(String serial) {

@@ -21,9 +21,11 @@ import android.content.Context
 import android.content.BroadcastReceiver
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import android.content.pm.ActivityInfo
 import androidx.core.content.FileProvider
 import com.caverock.androidsvg.SVG
 import com.example.flutter_project.serial.SerialPortManager
+import com.example.flutter_project.wifi.WifiHelper
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -38,8 +40,10 @@ class MainActivity : FlutterActivity() {
     private val serialMethodChannel = "serial_port"
     private val serialEventChannel = "serial_port/events"
     private val settingsChannel = "app_settings"
+    private val wifiManagerChannel = "wifi_manager"
     private val serialManager = SerialPortManager()
     private val serialExecutor = Executors.newSingleThreadExecutor()
+    private var wifiHelper: WifiHelper? = null
     private var wifiReturnReceiver: BroadcastReceiver? = null
     private var wifiReturnNetworkCallback: ConnectivityManager.NetworkCallback? = null
     private var wifiReturnTimeout: Runnable? = null
@@ -1177,15 +1181,94 @@ class MainActivity : FlutterActivity() {
                             result.error("close_for_update_failed", e.message, null)
                         }
                     }
+                    "applyOrientationMode" -> {
+                        try {
+                            val forceLandscape = call.argument<Boolean>("forceLandscape") ?: false
+                            requestedOrientation =
+                                if (forceLandscape) {
+                                    ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                                } else {
+                                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                                }
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error("apply_orientation_failed", e.message, null)
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
 
+        // WiFi Manager Channel - embedded WiFi management (API 21-26)
+        wifiHelper = WifiHelper(this)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, wifiManagerChannel)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "scanWifi" -> {
+                        wifiHelper?.startScan { networks ->
+                            runOnUiThread { result.success(networks) }
+                        }
+                    }
+                    "connectWifi" -> {
+                        val ssid = call.argument<String>("ssid") ?: ""
+                        val password = call.argument<String>("password") ?: ""
+                        if (ssid.isEmpty()) {
+                            result.error("connect_failed", "SSID is empty", null)
+                            return@setMethodCallHandler
+                        }
+                        Thread {
+                            try {
+                                val success = wifiHelper?.connectToNetwork(ssid, password) ?: false
+                                runOnUiThread { result.success(success) }
+                            } catch (e: Exception) {
+                                runOnUiThread {
+                                    result.error("connect_failed", e.message, null)
+                                }
+                            }
+                        }.start()
+                    }
+                    "disconnectWifi" -> {
+                        try {
+                            val success = wifiHelper?.disconnectFromNetwork() ?: false
+                            result.success(success)
+                        } catch (e: Exception) {
+                            result.error("disconnect_failed", e.message, null)
+                        }
+                    }
+                    "getCurrentWifi" -> {
+                        try {
+                            val info = wifiHelper?.getCurrentWifiInfo()
+                                ?: mapOf("ssid" to "", "ip" to "", "isConnected" to false)
+                            result.success(info)
+                        } catch (e: Exception) {
+                            result.error("get_wifi_failed", e.message, null)
+                        }
+                    }
+                    "isWifiEnabled" -> {
+                        try {
+                            result.success(wifiHelper?.isWifiEnabled() ?: false)
+                        } catch (e: Exception) {
+                            result.error("wifi_enabled_check_failed", e.message, null)
+                        }
+                    }
+                    "enableWifi" -> {
+                        try {
+                            val success = wifiHelper?.setWifiEnabled(true) ?: false
+                            result.success(success)
+                        } catch (e: Exception) {
+                            result.error("enable_wifi_failed", e.message, null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
 
     }
 
     override fun onDestroy() {
         cleanupWifiAutoReturn()
+        wifiHelper?.cleanup()
+        wifiHelper = null
         serialExecutor.shutdownNow()
         serialManager.close()
         super.onDestroy()

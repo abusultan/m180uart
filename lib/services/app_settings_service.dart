@@ -221,4 +221,15 @@ class AppSettingsService {
       return false;
     }
   }
+
+  Future<bool> applyOrientationMode({required bool forceLandscape}) async {
+    try {
+      final result = await _channel.invokeMethod<bool>('applyOrientationMode', {
+        'forceLandscape': forceLandscape,
+      });
+      return result ?? false;
+    } on PlatformException {
+      return false;
+    }
+  }
 }

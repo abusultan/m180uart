@@ -5,7 +5,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/handshake_response_resolver.dart';
 import '../core/machine_protocol.dart';
 import 'api_service.dart';
-import 'cut_settings_service.dart';
 
 class MachineSystemInfo {
   final String? serialNumber;
@@ -232,7 +231,14 @@ class CutterBluetoothService {
 
   bool _isDqFamilyAgent(String? agentType) {
     final agent = _canonicalizeAgentType(agentType);
-    return agent == 'DQ' || agent == 'DX' || agent == 'LH';
+    return agent == 'DQ' ||
+        agent == 'DX' ||
+        agent == 'LH' ||
+        agent == 'DQ_HANDSHAKE' ||
+        agent == 'MECHANIC_UART' ||
+        agent == 'MECHANIC' ||
+        agent == 'PASS_U32' ||
+        agent == 'DEPASS_U32';
   }
 
   bool _isSunshineFamilyAgent(String? agentType) {
@@ -275,7 +281,8 @@ class CutterBluetoothService {
         upperSerial.startsWith('DQ') ||
         upperSerial.startsWith('DX') ||
         upperSerial.startsWith('LH') ||
-        upperSerial.startsWith('DH')) {
+        upperSerial.startsWith('DH') ||
+        upperSerial.startsWith('MT')) {
       return 'DQ';
     }
 
@@ -304,6 +311,7 @@ class CutterBluetoothService {
         upperSerial.startsWith('DX') ||
         upperSerial.startsWith('LH') ||
         upperSerial.startsWith('DH') ||
+        upperSerial.startsWith('MT') ||
         upperSerial.startsWith('SUNSHINE') ||
         upperSerial.startsWith('CUTTER') ||
         upperSerial.startsWith('SS') ||
@@ -375,7 +383,8 @@ class CutterBluetoothService {
     final upper = serial.toUpperCase();
     if (upper.startsWith('DQ') ||
         upper.startsWith('DX') ||
-        upper.startsWith('LH')) {
+        upper.startsWith('LH') ||
+        upper.startsWith('MT')) {
       await cacheSuccessfulHandshake(
         'DQ_HANDSHAKE',
         false,
@@ -392,7 +401,8 @@ class CutterBluetoothService {
       final isPlt =
           upper.startsWith("DQ") ||
           upper.startsWith("DX") ||
-          upper.startsWith("LH");
+          upper.startsWith("LH") ||
+          upper.startsWith("MT");
       await prefs.setBool('last_machine_is_dq', isPlt);
     } catch (_) {}
   }
@@ -506,7 +516,7 @@ class CutterBluetoothService {
     final upper = serial.trim().toUpperCase();
     if (upper.isEmpty) return null;
 
-    if (upper.startsWith('DQ')) return 'crust';
+    if (upper.startsWith('DQ') || upper.startsWith('MT')) return 'crust';
     if (upper.startsWith('LH')) return 'hebeshi';
     if (upper.startsWith('DX') || upper.startsWith('DH')) return 'AtB';
     if (upper.startsWith('SS') ||
@@ -535,6 +545,8 @@ class CutterBluetoothService {
 
     final upper = serial.trim().toUpperCase();
     if (upper.isEmpty) return null;
+
+    if (upper.startsWith('MT')) return 'mietubl uart mini';
 
     if (upper.startsWith('SS') ||
         upper.startsWith('CUTTER') ||
@@ -853,6 +865,7 @@ class CutterBluetoothService {
     if (!_isConnected) throw Exception("Not connected");
     await _enqueueWriteOperation((sessionVersion) async {
       _assertWriteSession(expectedSessionVersion: sessionVersion);
+      print('UART_TX: $data');
       await _channel.invokeMethod('write', {'data': data});
       if (packetDelayMs > 0) {
         await Future.delayed(Duration(milliseconds: packetDelayMs));
@@ -863,11 +876,12 @@ class CutterBluetoothService {
   Future<void> writeBytes(
     List<int> bytes, {
     bool forceWithResponse = false,
-    int chunkSize = 20,
-    int packetDelayMs = 20,
+    int chunkSize = 2048,
+    int packetDelayMs = 400,
   }) async {
     if (!_isConnected) throw Exception("Not connected");
     await _enqueueWriteOperation((sessionVersion) async {
+      print('UART_TX_BYTES: ${bytes.length} bytes (first 100: ${String.fromCharCodes(bytes.take(100))})');
       for (int i = 0; i < bytes.length; i += chunkSize) {
         _assertWriteSession(expectedSessionVersion: sessionVersion);
         final end = (i + chunkSize < bytes.length) ? i + chunkSize : bytes.length;

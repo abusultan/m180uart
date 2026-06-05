@@ -1,4 +1,6 @@
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart';
+import 'app_settings_service.dart';
 
 class CutSettingsService {
   static const _keySpeed = 'cut_speed';
@@ -8,8 +10,10 @@ class CutSettingsService {
   static const _keySunshineSpeed = 'cut_speed_sunshine';
   static const _keySunshinePressure = 'cut_pressure_sunshine';
   static const _keyAutoFeed = 'cut_auto_feed';
+  static const _keyAutoUpdateEnabled = 'cut_auto_update_enabled';
   static const _keyAngleEnabled = 'cut_angle_enabled';
   static const _keyAngleValue = 'cut_angle_value';
+  static const _keyForceLandscape = 'force_landscape';
   static const _keySettingsVersion = 'cut_settings_version';
   static const int _resetVersion = 2;
 
@@ -75,9 +79,15 @@ class CutSettingsService {
         normalizedAgent == 'DQ' ||
         normalizedAgent == 'DX' ||
         normalizedAgent == 'LH' ||
+        normalizedAgent == 'DQ_HANDSHAKE' ||
+        normalizedAgent == 'MECHANIC_UART' ||
+        normalizedAgent == 'MECHANIC' ||
+        normalizedAgent == 'PASS_U32' ||
+        normalizedAgent == 'DEPASS_U32' ||
         normalizedSerial.startsWith('DQ') ||
         normalizedSerial.startsWith('DX') ||
-        normalizedSerial.startsWith('LH');
+        normalizedSerial.startsWith('LH') ||
+        normalizedSerial.startsWith('MT');
 
     if (!isRockspace && isDqFamily) {
       return scopeDq;
@@ -200,6 +210,11 @@ class CutSettingsService {
     return prefs.getBool(_keyAutoFeed) ?? defaultAutoFeed;
   }
 
+  Future<bool> getAutoUpdateEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_keyAutoUpdateEnabled) ?? false;
+  }
+
   Future<bool> getAngleEnabled() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_keyAngleEnabled) ?? defaultAngleEnabled;
@@ -208,6 +223,11 @@ class CutSettingsService {
   Future<double> getAngleValue() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getDouble(_keyAngleValue) ?? defaultAngleValue;
+  }
+
+  Future<bool> getForceLandscape() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_keyForceLandscape) ?? false;
   }
 
   Future<void> _ensureResetApplied(SharedPreferences prefs) async {
@@ -243,6 +263,11 @@ class CutSettingsService {
     await prefs.setBool(_keyAutoFeed, value);
   }
 
+  Future<void> setAutoUpdateEnabled(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyAutoUpdateEnabled, value);
+  }
+
   Future<void> setAngleEnabled(bool value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_keyAngleEnabled, value);
@@ -251,5 +276,23 @@ class CutSettingsService {
   Future<void> setAngleValue(double value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_keyAngleValue, value);
+  }
+
+  Future<void> setForceLandscape(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyForceLandscape, value);
+    if (value) {
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+    } else {
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+    }
+    await AppSettingsService().applyOrientationMode(forceLandscape: value);
   }
 }

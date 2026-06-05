@@ -228,26 +228,21 @@ class CutFileTransformer {
     var preparedBytes = List<int>.from(inputBytes);
     final isSjcFile = isSjcBytes(preparedBytes);
     final isPltFile = !isSjcFile && isPltBytes(preparedBytes);
-    final shouldNormalizeSjc =
-        isSjcFile && maxWidth != null && maxWidth > 0 && maxWidth < 160;
-    final keepsOriginalSjcPrefix = isSjcFile && !shouldNormalizeSjc && !isSunshineMachine;
+    final shouldNormalizeSjc = isSunshineMachine &&
+        isSjcFile &&
+        maxWidth != null &&
+        maxWidth > 0 &&
+        maxWidth < 160;
+    final keepsOriginalSjcPrefix = isSjcFile && !shouldNormalizeSjc;
     bool rebasedWideSjcToOrigin = false;
     bool rebasedPltToOrigin = false;
 
-    // MANDATORY ALIGNMENT & PEN-UP FOR ALL MACHINES
-    // We force this for every cut in the UART context because machines (especially Sunshine V9)
-    // mandate a U0,0 (Pen-Up to origin) at the start to avoid interpreting the first move 
-    // as a DRAG from the last position.
-    
-    // 1. Rebase coordinates to (0,0) to remove internal file offsets
-    final rebasedBytes = rebaseWideSjcToOriginIfNeeded(
-      inputBytes: preparedBytes,
-    );
-    rebasedWideSjcToOrigin = !_listsEqual(rebasedBytes, preparedBytes);
-    preparedBytes = rebasedBytes;
-
-    // 2. Inject U0,0 (Pen-Up to origin) before any cut commands
-    preparedBytes = ensureStartsWithPenUp(preparedBytes);
+    // Sunshine machines: send the file exactly as downloaded from server.
+    // The file's positioning depends on how it was generated server-side.
+    // The original server centers files based on maxWidth parameter.
+    if (isSunshineMachine && isSjcFile) {
+      // No transformation — send as-is
+    }
 
     if (preferOriginAlignedBackCut && isPltFile) {
       final pltRebasedBytes = rebasePltToOriginIfNeeded(inputBytes: preparedBytes);
@@ -272,15 +267,6 @@ class CutFileTransformer {
     final appliedMirror = autoMirror && isSjcFile;
     if (autoMirror) {
       preparedBytes = applyMirrorToBytes(inputBytes: preparedBytes);
-    }
-
-    if (shouldNormalizeSjc || isSunshineMachine) {
-      // THE STABILIZER: For Sunshine Vertical, we MUST use a known stable mapping.
-      // Rebuilding the file with 'rebuildSjcForNarrowLegacyCutter' forces the 
-      // 6240092912 mapping, which is the native language of the V9 large machines.
-      preparedBytes = rebuildSjcForNarrowLegacyCutter(
-        inputBytes: preparedBytes,
-      );
     }
 
     return CutPayloadPreparation(
@@ -843,6 +829,199 @@ class CutFileTransformer {
       final xEncoded = _encodeNumber(p.x.toString(), mapping);
       final yEncoded = _encodeNumber(p.y.toString(), mapping);
       tokens[p.index] = '${p.xPrefix}$xEncoded,${p.yPrefix}$yEncoded';
+    }
+
+    final rebuilt = 'IN ${tokens.join(' ')} @ ';
+    return latin1.encode(rebuilt);
+  }
+
+  /// Strips the leading calibration marks (U0,0 D0,0 D0,XX patterns) from
+  /// the beginning of an SJC file without rebasing or rebuilding the file.
+  /// This prevents the blade from scoring a line at position (0,0) before
+  /// moving to the actual design coordinates.
+  static List<int> _stripCalibrationMarks({required List<int> inputBytes}) {
+    String text;
+    try {
+      text = latin1.decode(inputBytes);
+    } catch (_) {
+      return inputBytes;
+    }
+
+    final trimmed = text.trim();
+    if (!trimmed.contains('WSJP=')) return inputBytes;
+
+    // Strategy: find the pattern "U0,0 D0,0" (or with ;) and remove everything
+    // from U0,0 up to (but not including) the first U or D with non-zero coords.
+    // The file looks like: "IN WSJP=XXX FSIZE...;U0,0 D0,0 D0,60 U9333,1542..."
+    // We want to get:      "IN WSJP=XXX FSIZE...; U9333,1542..."
+
+    // Find FSIZE or WSJP end, then find where calibration starts
+    final wsjpIdx = trimmed.indexOf('WSJP=');
+    if (wsjpIdx == -1) return inputBytes;
+
+    // Find the semicolon after FSIZE (marks end of header)
+    int headerEnd = trimmed.indexOf(';', wsjpIdx);
+    if (headerEnd == -1) {
+      // No semicolon — try space after WSJP value
+      headerEnd = trimmed.indexOf(' ', wsjpIdx + 15);
+      if (headerEnd == -1) return inputBytes;
+    }
+
+    // Everything after the header semicolon is coordinate data
+    final headerPart = trimmed.substring(0, headerEnd + 1);
+    final coordsPart = trimmed.substring(headerEnd + 1).trim();
+
+    // Split coords by space and find first non-zero, non-calibration token
+    final tokens = coordsPart.split(RegExp(r'\s+'));
+    int firstRealIdx = 0;
+
+    for (int i = 0; i < tokens.length; i++) {
+      final token = tokens[i];
+      if (token.isEmpty) continue;
+
+      // Extract prefix and check if it's a zero coordinate
+      final prefix = (token.startsWith('U') || token.startsWith('D'))
+          ? token[0]
+          : '';
+      final coords = prefix.isNotEmpty ? token.substring(1) : token;
+      final parts = coords.split(',');
+
+      if (parts.length != 2) {
+        firstRealIdx = i;
+        break;
+      }
+
+      // Check if both values are zero or very small (calibration)
+      final x = int.tryParse(parts[0]);
+      final y = int.tryParse(parts[1]);
+
+      if (x == null || y == null) {
+        firstRealIdx = i;
+        break;
+      }
+
+      // If X > 0, this is a real coordinate (not calibration)
+      if (x > 100) {
+        firstRealIdx = i;
+        break;
+      }
+
+      // X == 0 and Y small — this is calibration, skip it
+      // Continue to next token
+    }
+
+    if (firstRealIdx == 0) {
+      // No calibration marks found
+      return inputBytes;
+    }
+
+    // Rebuild: header + real coordinates (skip calibration)
+    final realCoords = tokens.sublist(firstRealIdx).join(' ');
+    final rebuilt = '$headerPart $realCoords';
+    return latin1.encode(rebuilt);
+  }
+
+  /// Centers the SJC cut design within the machine's width.
+  /// The original Sunshine server does this server-side when it receives the
+  /// machine maxWidth parameter. Since our server doesn't do this, we
+  /// calculate the offset needed to center the design and shift Y coordinates.
+  ///
+  /// Machine coordinate system: X = length (feed direction), Y = width (lateral)
+  /// maxWidth is in mm * 10 (e.g., 190 means the machine is 190 units wide ~= 19cm usable)
+  static List<int> _centerSjcForMachineWidth({
+    required List<int> inputBytes,
+    required int machineMaxWidth,
+  }) {
+    String text;
+    try {
+      text = latin1.decode(inputBytes);
+    } catch (_) {
+      return inputBytes;
+    }
+
+    final trimmed = text.trim();
+    if (!trimmed.contains('WSJP=')) return inputBytes;
+
+    final normalized =
+        trimmed.replaceAll('IN ', '').replaceAll(' @', '').trim();
+    final parts = normalized.split(RegExp(r'\s+'));
+    if (parts.isEmpty) return inputBytes;
+
+    final header = parts.first;
+    if (!header.contains('WSJP=')) return inputBytes;
+
+    final mappingStr = header.replaceAll('WSJP=', '');
+    final mapping = _buildMapping(mappingStr);
+    if (mapping == null || mapping.length != 10) return inputBytes;
+
+    final tokens = List<String>.from(parts);
+    final decodedPoints = <_PointToken>[];
+
+    for (int i = 1; i < tokens.length; i++) {
+      final token = tokens[i];
+      final split = token.split(',');
+      if (split.length != 2) continue;
+
+      final xPart = split[0];
+      final yPart = split[1];
+      final xPrefix = _prefixOf(xPart);
+      final yPrefix = _prefixOf(yPart);
+      final xDecoded = _decodeNumber(_stripPrefix(xPart), mapping);
+      final yDecoded = _decodeNumber(_stripPrefix(yPart), mapping);
+      if (xDecoded == null || yDecoded == null) continue;
+
+      final xVal = int.tryParse(xDecoded);
+      final yVal = int.tryParse(yDecoded);
+      if (xVal == null || yVal == null) continue;
+
+      decodedPoints.add(_PointToken(
+        index: i,
+        x: xVal,
+        y: yVal,
+        xPrefix: xPrefix,
+        yPrefix: yPrefix,
+      ));
+    }
+
+    if (decodedPoints.isEmpty) return inputBytes;
+
+    // Find the design's Y extent (width dimension)
+    int? minY;
+    int? maxY;
+    for (final point in decodedPoints) {
+      if (point.x == 0 && point.y == 0) continue;
+      minY = minY == null ? point.y : min(minY, point.y);
+      maxY = maxY == null ? point.y : max(maxY, point.y);
+    }
+
+    if (minY == null || maxY == null) return inputBytes;
+
+    final designWidth = maxY - minY;
+    // Machine width in the same coordinate units (maxWidth * 40 to match coordinate scale)
+    final machineWidthUnits = machineMaxWidth * 40;
+
+    if (designWidth >= machineWidthUnits) {
+      // Design is already as wide or wider than machine — no centering needed
+      return inputBytes;
+    }
+
+    // Calculate offset to center the design
+    final offsetY = ((machineWidthUnits - designWidth) ~/ 2) - minY;
+
+    if (offsetY <= 0) {
+      // Already centered or past center
+      return inputBytes;
+    }
+
+    // Apply offset to Y coordinates
+    for (final point in decodedPoints) {
+      if (point.x == 0 && point.y == 0) continue;
+      point.y += offsetY;
+
+      final xEncoded = _encodeNumber(point.x.toString(), mapping);
+      final yEncoded = _encodeNumber(point.y.toString(), mapping);
+      tokens[point.index] =
+          '${point.xPrefix}$xEncoded,${point.yPrefix}$yEncoded';
     }
 
     final rebuilt = 'IN ${tokens.join(' ')} @ ';
