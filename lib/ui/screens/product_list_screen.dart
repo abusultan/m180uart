@@ -105,7 +105,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
       _loadedProductIds.clear();
       _page = 1;
       _hasMore = true;
-      if (!_isSunshineType(normalized)) {
+      if (!_supportsCutSideFilter(normalized)) {
         _cutSideFilter = _CutSideFilter.all;
       }
     });
@@ -150,12 +150,17 @@ class _ProductListScreenState extends State<ProductListScreen> {
     });
   }
 
-  bool _isSunshineType(String? typeMachineName) {
-    return (typeMachineName ?? '').trim().toLowerCase() == 'sunshine';
+  bool _supportsCutSideFilter(String? typeMachineName) {
+    final normalized = (typeMachineName ?? '').trim().toLowerCase();
+    return normalized == 'sunshine' ||
+        normalized == 'dq' ||
+        normalized == 'skycut' ||
+        normalized == 'scky_cut' ||
+        normalized == 'skycutter';
   }
 
   bool get _shouldShowCutSideFilter {
-    return _isSunshineType(_lastLoadedTypeMachineName);
+    return _supportsCutSideFilter(_lastLoadedTypeMachineName);
   }
 
   String? get _selectedCutSideParameter {
@@ -195,7 +200,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
           await CutterBluetoothService().getTypeMachineNameForItems();
       _lastLoadedTypeMachineName = typeMachineName;
       final selectedCutSide =
-          _isSunshineType(typeMachineName) ? _selectedCutSideParameter : null;
+          _supportsCutSideFilter(typeMachineName)
+              ? _selectedCutSideParameter
+              : null;
       List<Product> newProducts;
 
       if (query.isNotEmpty) {
