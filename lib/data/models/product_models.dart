@@ -39,6 +39,19 @@ int _toInt(dynamic value) {
   return int.tryParse((value ?? '').toString()) ?? 0;
 }
 
+int? _toNullableInt(dynamic value) {
+  if (value == null) return null;
+  if (value is bool) return value ? 1 : 0;
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+
+  final text = value.toString().trim().toLowerCase();
+  if (text.isEmpty || text == 'null') return null;
+  if (text == 'true') return 1;
+  if (text == 'false') return 0;
+  return int.tryParse(text);
+}
+
 class Category {
   final int id;
   final String nameAr;
@@ -95,6 +108,10 @@ class Product {
   final int categoryId;
   final String entityType;
   final String? typeMachineName;
+  final int? isBack;
+  final String? cutSide;
+  final int? sourceId;
+  final int? sourceSort;
 
   Product({
     required this.id,
@@ -104,11 +121,17 @@ class Product {
     required this.categoryId,
     this.entityType = 'product',
     this.typeMachineName,
+    this.isBack,
+    this.cutSide,
+    this.sourceId,
+    this.sourceSort,
   });
 
   factory Product.fromJson(Map<String, dynamic> json) {
     final rawTypeMachineName =
         json['type_machine_name'] ?? json['typeMachineName'];
+    final parsedIsBack = _toNullableInt(json['isBack'] ?? json['is_back']);
+    final rawCutSide = (json['cutSide'] ?? json['cut_side'])?.toString();
     final modelJson = json['model'];
     final brandJson =
         modelJson is Map<String, dynamic> ? modelJson['brand'] : null;
@@ -127,6 +150,16 @@ class Product {
       ),
       entityType: isModelEntity ? 'model' : 'product',
       typeMachineName: rawTypeMachineName?.toString(),
+      isBack: parsedIsBack,
+      cutSide: rawCutSide?.trim().isNotEmpty == true
+          ? rawCutSide!.trim()
+          : parsedIsBack == null
+              ? null
+              : parsedIsBack == 1
+                  ? 'back'
+                  : 'front',
+      sourceId: _toNullableInt(json['sourceId'] ?? json['source_id']),
+      sourceSort: _toNullableInt(json['sourceSort'] ?? json['source_sort']),
     );
   }
 }

@@ -16,6 +16,8 @@ class ProductListScreen extends StatefulWidget {
   State<ProductListScreen> createState() => _ProductListScreenState();
 }
 
+enum _CutSideFilter { all, front, back }
+
 class _ProductListScreenState extends State<ProductListScreen> {
   final List<Product> _products = [];
   final Set<int> _loadedProductIds = <int>{};
@@ -32,6 +34,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
   StreamSubscription<String>? _typeMachineNameSub;
   String? _lastLoadedTypeMachineName;
   bool _pendingMachineTypeReload = false;
+  _CutSideFilter _cutSideFilter = _CutSideFilter.all;
 
   Future<void> _openProduct(Product product) async {
     if (_isOpeningProduct) return;
@@ -102,6 +105,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
       _loadedProductIds.clear();
       _page = 1;
       _hasMore = true;
+      if (!_isSunshineType(normalized)) {
+        _cutSideFilter = _CutSideFilter.all;
+      }
     });
     _loadProducts();
   }
@@ -144,6 +150,41 @@ class _ProductListScreenState extends State<ProductListScreen> {
     });
   }
 
+  bool _isSunshineType(String? typeMachineName) {
+    return (typeMachineName ?? '').trim().toLowerCase() == 'sunshine';
+  }
+
+  bool get _shouldShowCutSideFilter {
+    return _isSunshineType(_lastLoadedTypeMachineName);
+  }
+
+  String? get _selectedCutSideParameter {
+    return switch (_cutSideFilter) {
+      _CutSideFilter.all => null,
+      _CutSideFilter.front => 'front',
+      _CutSideFilter.back => 'back',
+    };
+  }
+
+  void _selectCutSideFilter(_CutSideFilter filter) {
+    if (_cutSideFilter == filter) return;
+
+    setState(() {
+      _cutSideFilter = filter;
+      _products.clear();
+      _loadedProductIds.clear();
+      _page = 1;
+      _hasMore = true;
+    });
+
+    if (_isLoading) {
+      _pendingMachineTypeReload = true;
+      return;
+    }
+
+    _loadProducts();
+  }
+
   Future<void> _loadProducts() async {
     if (_isLoading) return;
     setState(() => _isLoading = true);
@@ -153,6 +194,8 @@ class _ProductListScreenState extends State<ProductListScreen> {
       final typeMachineName =
           await CutterBluetoothService().getTypeMachineNameForItems();
       _lastLoadedTypeMachineName = typeMachineName;
+      final selectedCutSide =
+          _isSunshineType(typeMachineName) ? _selectedCutSideParameter : null;
       List<Product> newProducts;
 
       if (query.isNotEmpty) {
@@ -164,6 +207,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
           categoryId: widget.category.id,
           categoryEntityType: widget.category.entityType,
           typeMachineName: typeMachineName,
+          cutSide: selectedCutSide,
         );
       } else {
         // Use Category Endpoint (Default view)
@@ -172,6 +216,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
           _page,
           entityType: widget.category.entityType,
           typeMachineName: typeMachineName,
+          cutSide: selectedCutSide,
         );
       }
 
@@ -208,6 +253,69 @@ class _ProductListScreenState extends State<ProductListScreen> {
         }
       }
     }
+  }
+
+  String _filterLabel(BuildContext context, _CutSideFilter filter) {
+    return switch (filter) {
+      _CutSideFilter.all => AppStrings.of(context, 'filter_all'),
+      _CutSideFilter.front => AppStrings.of(context, 'filter_front'),
+      _CutSideFilter.back => AppStrings.of(context, 'filter_back'),
+    };
+  }
+
+  Widget _buildCutSideFilterBar() {
+    return Material(
+      color: Colors.white,
+      child: Container(
+        height: 58,
+        decoration: const BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: Color(0xFFEDEDED), width: 1),
+          ),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 9),
+        child: Row(
+          children: [
+            _buildCutSideFilterButton(_CutSideFilter.all),
+            _buildCutSideFilterButton(_CutSideFilter.front),
+            _buildCutSideFilterButton(_CutSideFilter.back),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCutSideFilterButton(_CutSideFilter filter) {
+    final selected = _cutSideFilter == filter;
+    return Expanded(
+      child: Center(
+        child: InkWell(
+          onTap: () => _selectCutSideFilter(filter),
+          borderRadius: BorderRadius.circular(22),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            curve: Curves.easeOut,
+            constraints: const BoxConstraints(minWidth: 62, minHeight: 36),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 7),
+            decoration: BoxDecoration(
+              color: selected ? const Color(0xFF555555) : Colors.transparent,
+              borderRadius: BorderRadius.circular(22),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              _filterLabel(context, filter),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: selected ? Colors.white : const Color(0xFF333333),
+                fontSize: 17,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -260,6 +368,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
               },
             ),
           ),
+          if (_shouldShowCutSideFilter) _buildCutSideFilterBar(),
           Expanded(
             child: _products.isEmpty && _isLoading
                 ? const Center(

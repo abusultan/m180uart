@@ -596,6 +596,7 @@ class ApiService {
     int page, {
     String? query,
     String? typeMachineName,
+    String? cutSide,
     String entityType = 'category',
   }) async {
     final Map<String, dynamic> params = {'page': page};
@@ -604,6 +605,9 @@ class ApiService {
     }
     if (typeMachineName != null && typeMachineName.trim().isNotEmpty) {
       params['type_machine_name'] = typeMachineName.trim();
+    }
+    if (cutSide != null && cutSide.trim().isNotEmpty) {
+      params['cut_side'] = cutSide.trim();
     }
 
     try {
@@ -646,6 +650,7 @@ class ApiService {
     int? categoryId,
     String categoryEntityType = 'category',
     String? typeMachineName,
+    String? cutSide,
   }) async {
     try {
       final Map<String, dynamic> params = {'search': query, 'page': page};
@@ -660,6 +665,9 @@ class ApiService {
       }
       if (typeMachineName != null && typeMachineName.trim().isNotEmpty) {
         params['type_machine_name'] = typeMachineName.trim();
+      }
+      if (cutSide != null && cutSide.trim().isNotEmpty) {
+        params['cut_side'] = cutSide.trim();
       }
 
       final response = await _dio.get('products', queryParameters: params);
