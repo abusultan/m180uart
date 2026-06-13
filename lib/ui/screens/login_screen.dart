@@ -239,6 +239,32 @@ class _LoginScreenState extends State<LoginScreen> {
                   style: const TextStyle(color: Color(0xFF00FF88)),
                 ),
               ),
+              const SizedBox(height: 32),
+              GestureDetector(
+                onLongPress: () async {
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.remove('login_user');
+                  await prefs.remove('login_pass');
+                  if (!mounted) return;
+                  setState(() {
+                    _loginController.clear();
+                    _passwordController.clear();
+                  });
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('تم تصفير الحساب لتسليم الماكينة للزبون'),
+                      backgroundColor: Colors.orange,
+                    ),
+                  );
+                },
+                child: const Opacity(
+                  opacity: 0.2,
+                  child: Padding(
+                    padding: EdgeInsets.all(16.0),
+                    child: Icon(Icons.restart_alt, color: Colors.white, size: 24),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
