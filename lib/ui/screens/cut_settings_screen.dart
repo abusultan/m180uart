@@ -430,9 +430,15 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
       }
 
       final apkPath = await _downloadUpdateApk();
-      final apkIsNewer = await _appSettings.isApkNewerThanInstalled(apkPath);
-      if (!apkIsNewer) {
-        throw Exception(AppStrings.of(context, 'update_apk_not_newer'));
+      final comparison = await _appSettings.compareApkWithInstalled(apkPath);
+      if (comparison == null || comparison['isNewer'] != true) {
+        final runningPkg = comparison?['runningPackageName'] ?? 'unknown';
+        final archivePkg = comparison?['archivePackageName'] ?? 'unknown';
+        final runningVer = comparison?['runningVersionCode'] ?? 'unknown';
+        final archiveVer = comparison?['archiveVersionCode'] ?? 'unknown';
+        throw Exception(
+          '${AppStrings.of(context, 'update_apk_not_newer')}\n(Running: $runningPkg v$runningVer\nUpdate: $archivePkg v$archiveVer)'
+        );
       }
 
       if (mounted) {

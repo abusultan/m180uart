@@ -14,6 +14,9 @@ import '../../services/cut_settings_service.dart';
 import 'cut_settings_screen.dart' as cut_settings_ui;
 import 'scan_screen.dart';
 import '../widgets/svg_renderer_widget.dart';
+import '../../core/cut_text_overlay_service.dart';
+import '../widgets/text_overlay_interactive_viewer.dart';
+import 'cut_text_overlay_sheet.dart';
 
 class DeviceDetailScreen extends StatefulWidget {
   final ProductItem? productItem;
@@ -42,6 +45,8 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   String _status = "";
   File? _cutFile;
   bool _didInitLocalizedStatus = false;
+  CutTextOverlaySpec? _catalogTextOverlay;
+  String _settingsScope = CutSettingsService.scopeGeneric;
 
   @override
   void initState() {
@@ -89,6 +94,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     final angleValue = await _cutSettings.getAngleValue();
     if (!mounted) return;
     setState(() {
+      _settingsScope = settingsScope;
       _defaultSpeed = speed;
       _defaultPressure = pressure;
       _angleEnabled = angleEnabled;
@@ -184,6 +190,25 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     }
   }
 
+  Future<void> _openCatalogTextOverlay() async {
+    final result = await showCutTextOverlaySheet(
+      context,
+      initialSpec: _catalogTextOverlay,
+    );
+    if (result == null) return;
+    if (result.cleared) {
+      setState(() {
+        _catalogTextOverlay = null;
+      });
+      return;
+    }
+    if (result.spec != null) {
+      setState(() {
+        _catalogTextOverlay = result.spec;
+      });
+    }
+  }
+
   String _resolveCutFileUrl() {
     final item = widget.productItem;
     if (item == null) return '';
@@ -265,19 +290,35 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     }
 
     if (_previewData != null) {
+      final isSunshineScope = _settingsScope == CutSettingsService.scopeSunshine;
       return Container(
         color: Colors.white,
         child: Stack(
           children: [
-            Positioned.fill(
-              child: Transform(
-                alignment: Alignment.center,
-                transform: Matrix4.diagonal3Values(-1.0, 1.0, 1.0),
-                child: CustomPaint(
-                  painter: StaticCutPainter(_previewData!, color: Colors.black),
+            if (isSunshineScope && _catalogTextOverlay != null)
+              Positioned.fill(
+                child: TextOverlayEditor(
+                  baseData: _previewData!,
+                  spec: _catalogTextOverlay!,
+                  transport: CutTextOverlayTransport.sunshineSjc,
+                  flipX: true,
+                  onSpecChanged: (newSpec) {
+                    setState(() {
+                      _catalogTextOverlay = newSpec;
+                    });
+                  },
+                ),
+              )
+            else
+              Positioned.fill(
+                child: Transform(
+                  alignment: Alignment.center,
+                  transform: Matrix4.diagonal3Values(-1.0, 1.0, 1.0),
+                  child: CustomPaint(
+                    painter: StaticCutPainter(_previewData!, color: Colors.black),
+                  ),
                 ),
               ),
-            ),
             _buildAngleBadge(),
           ],
         ),
@@ -509,7 +550,28 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       if (preparation == null) {
         throw Exception(fileNotFoundMessage);
       }
-      final bytesToSend = preparation.bytes;
+      var bytesToSend = preparation.bytes;
+
+      if (isSunshineScope && _catalogTextOverlay != null && _previewData != null) {
+        final maxWidth = await _resolveMachineMaxWidth();
+        try {
+          final sunshineSpec = _catalogTextOverlay!.copyWith(
+            flipHorizontally: true,
+          );
+          final overlayResult = CutTextOverlayService.build(
+            baseData: _previewData!,
+            spec: sunshineSpec,
+            transport: CutTextOverlayTransport.sunshineSjc,
+            maxWidth: maxWidth,
+            preparedBytes: bytesToSend,
+            flipX: false,
+          );
+          bytesToSend = overlayResult.bytes;
+          debugPrint("Merged Sunshine SJC text overlay into bytesToSend successfully.");
+        } catch (e) {
+          debugPrint("Sunshine SJC text overlay merge failed: $e");
+        }
+      }
 
       debugPrint(
         'UART cut normalization: maxWidth=${preparation.maxWidth} '
@@ -923,6 +985,39 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                   overflow: TextOverflow.ellipsis,
                 ),
                 const Spacer(),
+                if (widget.productItem != null && _settingsScope == CutSettingsService.scopeSunshine)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12.0),
+                    child: SizedBox(
+                      height: isLandscape ? 44 : 50,
+                      child: OutlinedButton.icon(
+                        onPressed: _openCatalogTextOverlay,
+                        icon: Icon(
+                          _catalogTextOverlay != null
+                              ? Icons.edit
+                              : Icons.text_fields,
+                        ),
+                        label: Text(
+                          _catalogTextOverlay != null
+                              ? '${AppStrings.of(context, 'text_overlay_title')}: ${_catalogTextOverlay!.text}'
+                              : AppStrings.of(context, 'text_overlay_title'),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _catalogTextOverlay != null
+                              ? const Color(0xFF00FF88)
+                              : Colors.white70,
+                          side: BorderSide(
+                            color: _catalogTextOverlay != null
+                                ? const Color(0xFF00FF88)
+                                : Colors.white24,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 actionButton,
                 if (isConnected)
                   Padding(

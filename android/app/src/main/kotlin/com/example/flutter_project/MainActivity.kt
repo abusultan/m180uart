@@ -476,21 +476,39 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun isApkNewerThanInstalledInternal(path: String): Boolean {
+        val comparison = compareApkWithInstalledInternal(path)
+        return comparison["isNewer"] == true
+    }
+
+    private fun compareApkWithInstalledInternal(path: String): Map<String, Any?> {
         val apkFile = File(path)
         if (!apkFile.exists()) {
             throw IllegalArgumentException("APK not found: $path")
         }
 
-        val archiveInfo = getArchivePackageInfoSafe(path) ?: return false
-        val archivePackageName = archiveInfo.packageName ?: return false
-        if (archivePackageName != packageName) {
-            return false
-        }
-
-        val installedInfo = getInstalledPackageInfoSafe(packageName) ?: return true
+        val archiveInfo = getArchivePackageInfoSafe(path) 
+            ?: throw IllegalStateException("Failed to parse downloaded APK manifest.")
+        val archivePackageName = archiveInfo.packageName 
+            ?: throw IllegalStateException("Downloaded APK has no package name.")
+        
+        val installedInfo = getInstalledPackageInfoSafe(packageName)
+        val installedVersionCode = if (installedInfo != null) getVersionCode(installedInfo) else 0L
+        val installedVersionName = installedInfo?.versionName ?: ""
+        
         val incomingVersionCode = getVersionCode(archiveInfo)
-        val installedVersionCode = getVersionCode(installedInfo)
-        return incomingVersionCode > installedVersionCode
+        val incomingVersionName = archiveInfo.versionName ?: ""
+        
+        val isNewer = (archivePackageName == packageName && incomingVersionCode > installedVersionCode)
+        
+        return mapOf(
+            "runningPackageName" to packageName,
+            "archivePackageName" to archivePackageName,
+            "runningVersionCode" to installedVersionCode,
+            "runningVersionName" to installedVersionName,
+            "archiveVersionCode" to incomingVersionCode,
+            "archiveVersionName" to incomingVersionName,
+            "isNewer" to isNewer
+        )
     }
 
     private fun runRootCommandDetailed(command: String): RootCommandResult {
@@ -1163,6 +1181,18 @@ class MainActivity : FlutterActivity() {
                         }
                         try {
                             result.success(isApkNewerThanInstalledInternal(pathArg))
+                        } catch (e: Exception) {
+                            result.error("apk_version_check_failed", e.message, null)
+                        }
+                    }
+                    "compareApkWithInstalled" -> {
+                        val pathArg = call.argument<String>("path")
+                        if (pathArg.isNullOrBlank()) {
+                            result.error("apk_version_check_failed", "path is empty", null)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            result.success(compareApkWithInstalledInternal(pathArg))
                         } catch (e: Exception) {
                             result.error("apk_version_check_failed", e.message, null)
                         }

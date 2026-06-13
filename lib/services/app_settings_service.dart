@@ -212,6 +212,19 @@ class AppSettingsService {
     }
   }
 
+  Future<Map<String, dynamic>?> compareApkWithInstalled(String apkPath) async {
+    try {
+      final result = await _channel.invokeMethod<dynamic>(
+          'compareApkWithInstalled', {'path': apkPath});
+      if (result is Map) {
+        return result.map((key, value) => MapEntry(key.toString(), value));
+      }
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
+
   Future<bool> closeForBackgroundUpdate() async {
     try {
       final result =

@@ -1233,6 +1233,25 @@ class CutFileTransformer {
     }
     return buffer.toString();
   }
+
+  static List<String>? extractSjcEncodingMap(List<int> inputBytes) {
+    try {
+      final text = latin1.decode(inputBytes).trim();
+      if (!text.contains('WSJP=')) return null;
+      final normalized = text.replaceAll('IN ', '').replaceAll(' @', '').trim();
+      final parts = normalized.split(RegExp(r'\s+'));
+      if (parts.isEmpty) return null;
+      final header = parts.first;
+      if (!header.contains('WSJP=')) return null;
+      return _buildMapping(header.replaceAll('WSJP=', ''));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static String encodeWithDigitMapping(String value, List<String> mapping) {
+    return _encodeNumber(value, mapping);
+  }
 }
 
 class _PointToken {
