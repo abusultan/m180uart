@@ -2,9 +2,10 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
+import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/models/auth_response.dart';
 import '../data/models/product_models.dart';
@@ -145,6 +146,26 @@ class ApiService {
   }
 
   // --- Auth ---
+
+  Future<List<String>> fetchScreensavers() async {
+    try {
+      final response = await _dio.get('screensavers');
+      if (response.statusCode == 200) {
+        // Assume API returns { "success": true, "images": ["url1", "url2"] }
+        // or just a JSON array ["url1", "url2"]
+        final data = response.data;
+        if (data is Map<String, dynamic> && data['images'] != null) {
+          return List<String>.from(data['images']);
+        } else if (data is List) {
+          return List<String>.from(data);
+        }
+      }
+      return [];
+    } catch (e) {
+      debugPrint("Failed to fetch screensavers: $e");
+      return [];
+    }
+  }
 
   Future<LoginResponse> login(String login, String password) async {
     try {

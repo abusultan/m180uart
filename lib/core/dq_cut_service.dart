@@ -163,7 +163,7 @@ class DqCutService {
           if (challenge != null) {
             challengeResponded = true;
             final algo = _bluetooth.successfulHandshakeType ?? 'DQ';
-            final response = HandshakeResponseResolver.resolve(challenge, algo);
+            final response = HandshakeResponseResolver.resolveChallengeResponse(algorithm: algo, challenge: challenge);
             _bluetooth.write(';BD:12,$response;');
             print('📤 DQ PreCut: challenge=$challenge → BD:12,$response;');
           }
@@ -476,7 +476,6 @@ class DqCutService {
       maxWidth: maxWidth,
       angleDegrees: angleDegrees,
       autoMirror: autoMirror,
-      isDqMachine: true,
     );
   }
 

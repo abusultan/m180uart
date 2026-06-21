@@ -264,7 +264,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     await _executeDqCustomCut(spec);
   }
 
-  Future<void> _executeDqCustomCut(DqCustomCutResult spec) async {
+  Future<void> _executeDqCustomCut(DqCustomCutResult result) async {
     if (_isCutting) return;
     setState(() {
       _isCutting = true;
@@ -272,10 +272,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     });
 
     try {
-      final buildResult = DqCustomCutBuilder.build(
-        spec: spec,
-        mirrorX: false,
-      );
+      final buildResult = DqCustomCutBuilder.build(result.spec);
 
       final bytesToSend = buildResult.bytes;
 
@@ -286,9 +283,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       await _dqCutService.applySpeedAndPressure(speed: cutSpeed, pressure: cutPressure);
 
       setState(() => _status = AppStrings.of(context, 'status_sync_handshake'));
-      final handshakeSuccess = await _dqCutService.performPreCutHandshake(
-        isRockspace: false,
-      );
+      final handshakeSuccess = await _dqCutService.performPreCutHandshake();
       if (!handshakeSuccess) {
         throw Exception(AppStrings.of(context, 'error_handshake_failed'));
       }
@@ -298,9 +293,8 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       setState(() => _status = AppStrings.of(context, 'status_cutting'));
       final fsize = await _dqCutService.waitForFsize();
       await _dqCutService.recordCutHistory(
-        fsize: fsize,
-        agent: _bluetooth.cachedAgentType ?? 'DQ_UART',
-        productName: 'Custom Cut ${spec.width}x${spec.height}',
+        productId: 'custom_cut',
+        productName: 'Custom Cut ${result.spec.widthMm}x${result.spec.heightMm}',
       );
       await _dqCutService.incrementCutCounter();
       // Not recording offline cut to not decrement balance for Custom Cut since product ID is not set
@@ -610,9 +604,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         await _dqCutService.applySpeedAndPressure(speed: cutSpeed, pressure: cutPressure);
         
         setState(() => _status = AppStrings.of(context, 'status_sync_handshake'));
-        final handshakeSuccess = await _dqCutService.performPreCutHandshake(
-          isRockspace: false,
-        );
+        final handshakeSuccess = await _dqCutService.performPreCutHandshake();
         if (!handshakeSuccess) throw Exception(handshakeFailedMessage);
         
         await _dqCutService.sendCutData(preparation.bytes);
@@ -633,13 +625,12 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         setState(() => _status = AppStrings.of(context, 'status_cutting'));
         final fsize = await _dqCutService.waitForFsize();
         await _dqCutService.recordCutHistory(
-          fsize: fsize,
-          agent: _bluetooth.cachedAgentType ?? 'DQ_UART',
-          productName: widget.productItem?.title ?? 'Unknown DQ Product',
+          productId: productIdForDecrement.toString(),
+          productName: widget.productItem?.nameEn ?? 'Unknown DQ Product',
         );
         await _dqCutService.incrementCutCounter();
         await _dqCutService.recordOfflineCut(
-          productId: productIdForDecrement,
+          productId: productIdForDecrement?.toString() ?? '',
           serial: _bluetooth.serialNumber ?? '',
         );
         

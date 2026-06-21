@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'ui/screens/login_screen.dart';
 import 'ui/screens/splash_screen.dart';
 import 'ui/screens/main_screen.dart';
@@ -9,6 +10,7 @@ import 'ui/screens/rep_main_screen.dart';
 import 'services/api_service.dart';
 import 'providers/language_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'ui/widgets/inactivity_detector.dart';
 
 import 'package:flutter_localizations/flutter_localizations.dart';
 
@@ -45,6 +47,7 @@ Future<void> _applyInitialOrientation() async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  WakelockPlus.enable(); // Keep screen awake
   HttpOverrides.global = AppHttpOverrides();
   await _applyInitialOrientation();
   await ApiService.initialize();
@@ -57,6 +60,8 @@ void main() async {
 }
 
 class CutterApp extends StatelessWidget {
+  static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
   const CutterApp({super.key});
 
   @override
@@ -64,10 +69,10 @@ class CutterApp extends StatelessWidget {
     return Consumer<LanguageProvider>(
       builder: (context, languageProvider, child) {
         return MaterialApp(
+          navigatorKey: navigatorKey,
           title: 'Anticrash',
           debugShowCheckedModeBanner: false,
-          locale: languageProvider
-              .locale, // This might be null, which is fine (uses system default)
+          locale: languageProvider.locale,
           theme: ThemeData(
             colorScheme: ColorScheme.fromSeed(
               seedColor: const Color(0xFF00FF88),
@@ -85,6 +90,12 @@ class CutterApp extends StatelessWidget {
             Locale('ar'), // Arabic
           ],
           home: const SplashScreen(),
+          builder: (context, child) {
+            return InactivityDetector(
+              navigatorKey: navigatorKey,
+              child: child!,
+            );
+          },
         );
       },
     );
