@@ -1,6 +1,6 @@
 {
-  "versionCode": 54,
+  "versionCode": 55,
   "versionName": "1.0.51",
   "url": "https://anti-crash.com/updateuart.apk",
-  "releaseNotes": "Fix font dropdown visibility and scrolling"
+  "releaseNotes": "Add font selection to dq text on cut screen"
 }
