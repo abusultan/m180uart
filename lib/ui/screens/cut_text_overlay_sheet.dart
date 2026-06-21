@@ -88,148 +88,168 @@ class _CutTextOverlaySheetState extends State<_CutTextOverlaySheet> {
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
+    String displayFontFamily = _fontFamily;
+    if (displayFontFamily == 'AlibabaBlack') {
+      displayFontFamily = 'AlibabaPuHuiTi';
+    }
+
     return Padding(
-      padding: EdgeInsets.fromLTRB(20, 20, 20, bottomInset + 20),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Container(
-              width: 44,
-              height: 5,
-              decoration: BoxDecoration(
-                color: Colors.white24,
-                borderRadius: BorderRadius.circular(99),
-              ),
-            ),
-          ),
-          const SizedBox(height: 20),
-          Text(
-            AppStrings.of(context, 'text_overlay_title'),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            AppStrings.of(context, 'text_overlay_subtitle'),
-            style: const TextStyle(color: Colors.white70, fontSize: 13),
-          ),
-          const SizedBox(height: 18),
-          TextField(
-            controller: _controller,
-            textCapitalization: TextCapitalization.characters,
-            style: TextStyle(color: Colors.white, fontFamily: _fontFamily),
-            decoration: InputDecoration(
-              labelText: AppStrings.of(context, 'text_overlay_field'),
-              labelStyle: const TextStyle(color: Colors.white70),
-              hintText: AppStrings.of(context, 'text_overlay_hint'),
-              hintStyle: const TextStyle(color: Colors.white38),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: const BorderSide(color: Colors.white24),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: const BorderSide(color: Color(0xFF00FF88)),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          _LabeledDropdown<String>(
-            label: AppStrings.of(context, 'text_overlay_font'),
-            value: _fontFamily,
-            items: [
-              DropdownMenuItem(
-                value: 'AdobeGothic',
-                child: Text('Adobe Gothic'),
-              ),
-              DropdownMenuItem(
-                value: 'AlibabaBlack',
-                child: Text('Alibaba Black'),
-              ),
-              DropdownMenuItem(
-                value: 'Stencil',
-                child: Text('Stencil'),
-              ),
-              DropdownMenuItem(
-                value: 'Oswald',
-                child: Text('Oswald'),
-              ),
-              DropdownMenuItem(
-                value: 'Righteous',
-                child: Text('Righteous'),
-              ),
-              DropdownMenuItem(
-                value: 'Cinzel',
-                child: Text('Cinzel'),
-              ),
-            ],
-            onChanged: (value) {
-              if (value == null) return;
-              setState(() => _fontFamily = value);
-            },
-          ),
-          const SizedBox(height: 10),
-          SwitchListTile.adaptive(
-            contentPadding: EdgeInsets.zero,
-            value: _flipHorizontally,
-            activeColor: const Color(0xFF00FF88),
-            title: Text(
-              AppStrings.of(context, 'text_overlay_flip'),
-              style: const TextStyle(color: Colors.white),
-            ),
-            subtitle: Text(
-              AppStrings.of(context, 'text_overlay_drag_hint'),
-              style: const TextStyle(color: Colors.white60, fontSize: 12),
-            ),
-            onChanged: (value) {
-              setState(() => _flipHorizontally = value);
-            },
-          ),
-          const SizedBox(height: 22),
-          Row(
+        padding: EdgeInsets.fromLTRB(20, 20, 20, bottomInset + 20),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (widget.initialSpec != null)
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () {
-                      Navigator.of(
-                        context,
-                      ).pop(const CutTextOverlaySheetResult(cleared: true));
-                    },
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.redAccent,
-                      side: const BorderSide(color: Colors.redAccent),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
+              Center(
+                child: Container(
+                  width: 44,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                AppStrings.of(context, 'text_overlay_title'),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                AppStrings.of(context, 'text_overlay_subtitle'),
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+              const SizedBox(height: 18),
+              TextField(
+                controller: _controller,
+                textCapitalization: TextCapitalization.characters,
+                style: TextStyle(
+                    color: Colors.white, fontFamily: displayFontFamily),
+                decoration: InputDecoration(
+                  labelText: AppStrings.of(context, 'text_overlay_field'),
+                  labelStyle: const TextStyle(color: Colors.white70),
+                  hintText: AppStrings.of(context, 'text_overlay_hint'),
+                  hintStyle: const TextStyle(color: Colors.white38),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: Colors.white24),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(color: Color(0xFF00FF88)),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              _LabeledDropdown<String>(
+                label: AppStrings.of(context, 'text_overlay_font'),
+                value: _fontFamily,
+                items: [
+                  DropdownMenuItem(
+                    value: 'AdobeGothic',
+                    child: Text('Adobe Gothic',
+                        style: const TextStyle(
+                            color: Colors.white, fontFamily: 'AdobeGothic')),
+                  ),
+                  DropdownMenuItem(
+                    value: 'AlibabaBlack',
+                    child: Text('Alibaba Black',
+                        style: const TextStyle(
+                            color: Colors.white, fontFamily: 'AlibabaPuHuiTi')),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Stencil',
+                    child: Text('Stencil',
+                        style: const TextStyle(
+                            color: Colors.white, fontFamily: 'Stencil')),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Oswald',
+                    child: Text('Oswald',
+                        style: const TextStyle(
+                            color: Colors.white, fontFamily: 'Oswald')),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Righteous',
+                    child: Text('Righteous',
+                        style: const TextStyle(
+                            color: Colors.white, fontFamily: 'Righteous')),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Cinzel',
+                    child: Text('Cinzel',
+                        style: const TextStyle(
+                            color: Colors.white, fontFamily: 'Cinzel')),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() => _fontFamily = value);
+                },
+              ),
+              const SizedBox(height: 10),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                value: _flipHorizontally,
+                activeColor: const Color(0xFF00FF88),
+                title: Text(
+                  AppStrings.of(context, 'text_overlay_flip'),
+                  style: const TextStyle(color: Colors.white),
+                ),
+                subtitle: Text(
+                  AppStrings.of(context, 'text_overlay_drag_hint'),
+                  style: const TextStyle(color: Colors.white60, fontSize: 12),
+                ),
+                onChanged: (value) {
+                  setState(() => _flipHorizontally = value);
+                },
+              ),
+              const SizedBox(height: 22),
+              Row(
+                children: [
+                  if (widget.initialSpec != null)
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () {
+                          Navigator.of(
+                            context,
+                          ).pop(const CutTextOverlaySheetResult(cleared: true));
+                        },
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.redAccent,
+                          side: const BorderSide(color: Colors.redAccent),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child:
+                            Text(AppStrings.of(context, 'text_overlay_remove')),
                       ),
                     ),
-                    child: Text(AppStrings.of(context, 'text_overlay_remove')),
-                  ),
-                ),
-              if (widget.initialSpec != null) const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: _submit,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00FF88),
-                    foregroundColor: Colors.black,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+                  if (widget.initialSpec != null) const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _submit,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF00FF88),
+                        foregroundColor: Colors.black,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: Text(AppStrings.of(context, 'text_overlay_apply')),
                     ),
                   ),
-                  child: Text(AppStrings.of(context, 'text_overlay_apply')),
-                ),
+                ],
               ),
             ],
           ),
-        ],
-      ),
-    );
+        ));
   }
 }
 

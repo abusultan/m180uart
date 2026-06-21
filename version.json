@@ -1,6 +1,6 @@
 {
-  "versionCode": 53,
-  "versionName": "1.0.50",
+  "versionCode": 54,
+  "versionName": "1.0.51",
   "url": "https://anti-crash.com/updateuart.apk",
-  "releaseNotes": "Show font preview in text field"
+  "releaseNotes": "Fix font dropdown visibility and scrolling"
 }
