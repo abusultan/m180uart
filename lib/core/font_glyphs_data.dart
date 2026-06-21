@@ -93,7 +93,7 @@ class FontGlyphsData {
       [Offset(0.73, 0.0), Offset(0.73, 0.4), Offset(0.27, 0.4), Offset(0.27, 0.0), Offset(0.0, 0.0), Offset(0.0, 1.0), Offset(0.27, 1.0), Offset(0.27, 0.57), Offset(0.73, 0.57), Offset(0.73, 1.0), Offset(1.0, 1.0), Offset(1.0, 0.0), Offset(0.73, 0.0)],
     ],
     'I': [
-      [Offset(1.0, 1.0), Offset(1.0, 0.0), Offset(0.0, 0.0), Offset(0.0, 1.0), Offset(1.0, 1.0)],
+      [Offset(0.32, 1.0), Offset(0.32, 0.0), Offset(0.68, 0.0), Offset(0.68, 1.0), Offset(0.32, 1.0)],
     ],
     'J': [
       [Offset(0.58, 0.0), Offset(0.58, 0.65), Offset(0.58, 0.8), Offset(0.45, 0.84), Offset(0.26, 0.84), Offset(0.17, 0.84), Offset(0.1, 0.83), Offset(0.05, 0.83), Offset(0.0, 0.98), Offset(0.07, 0.99), Offset(0.2, 1.0), Offset(0.3, 1.0), Offset(0.71, 1.0), Offset(1.0, 0.92), Offset(1.0, 0.65), Offset(1.0, 0.0), Offset(0.58, 0.0)],
@@ -240,7 +240,7 @@ class FontGlyphsData {
       [Offset(1.0, 0.0), Offset(1.0, 1.0), Offset(0.68, 1.0), Offset(0.68, 0.59), Offset(0.32, 0.59), Offset(0.32, 1.0), Offset(0.0, 1.0), Offset(0.0, 0.0), Offset(0.32, 0.0), Offset(0.32, 0.35), Offset(0.68, 0.35), Offset(0.68, 0.0), Offset(1.0, 0.0)],
     ],
     'I': [
-      [Offset(0.0, 0.0), Offset(1.0, 0.0), Offset(1.0, 1.0), Offset(0.0, 1.0), Offset(0.0, 0.0)],
+      [Offset(0.32, 0.0), Offset(0.68, 0.0), Offset(0.68, 1.0), Offset(0.32, 1.0), Offset(0.32, 0.0)],
     ],
     'J': [
       [Offset(0.24, 1.0), Offset(0.18, 1.0), Offset(0.06, 1.0), Offset(0.0, 0.99), Offset(0.0, 0.82), Offset(0.05, 0.83), Offset(0.14, 0.83), Offset(0.18, 0.83), Offset(0.26, 0.83), Offset(0.37, 0.81), Offset(0.43, 0.78), Offset(0.45, 0.72), Offset(0.45, 0.69), Offset(0.45, 0.0), Offset(1.0, 0.0), Offset(1.0, 0.7), Offset(1.0, 0.78), Offset(0.89, 0.89), Offset(0.69, 0.97), Offset(0.41, 1.0), Offset(0.24, 1.0)],
