@@ -1,9 +1,6 @@
 {
-  "versionCode": 49,
-  "version_code": 49,
-  "buildNumber": 49,
-  "build_number": 49,
-  "version": 49,
-  "versionName": "1.0.46",
-  "apkUrl": "https://anti-crash.com/updateuart.apk"
+  "versionCode": 51,
+  "versionName": "1.0.48",
+  "url": "https://anti-crash.com/updateuart.apk",
+  "releaseNotes": "Fix DQ text on cut shape decoding and lower screensaver timeout to 40s"
 }

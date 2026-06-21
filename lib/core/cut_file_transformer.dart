@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
-
+import 'sjm_cipher.dart';
 class CutPayloadPreparation {
   const CutPayloadPreparation({
     required this.bytes,
@@ -476,7 +476,9 @@ class CutFileTransformer {
     }
 
     final trimmed = text.trim();
-    if (trimmed.contains('WSJP=')) {
+    if (trimmed.contains('SJM=')) {
+      return _decodeSjmPathData(trimmed);
+    } else if (trimmed.contains('WSJP=')) {
       return _decodeSjcPathData(trimmed);
     } else if (trimmed.contains('PU') ||
         trimmed.contains('PD') ||
@@ -484,6 +486,59 @@ class CutFileTransformer {
       return _decodePltPathData(trimmed);
     }
     return null;
+  }
+
+  static CutPathData? _decodeSjmPathData(String text) {
+    final seed = SjmCipher.extractSeed(text);
+    if (seed == null || seed.length < 15) return null;
+
+    final keyMap = SjmCipher.generateKeyMap(seed);
+    if (keyMap == null) return null;
+
+    final cleaned = text
+        .replaceAll('IN ', '')
+        .replaceAll('@', '')
+        .replaceAll(';', ' ')
+        .trim();
+    if (!cleaned.contains('SJM=')) return null;
+
+    final tokens = cleaned
+        .split(RegExp(r'\s+'))
+        .where((token) => token.isNotEmpty)
+        .toList(growable: false);
+    if (tokens.isEmpty) return null;
+
+    final points = <Offset>[];
+    final drawFlags = <bool>[];
+
+    for (final token in tokens) {
+      if (token == 'IN' ||
+          token.contains('SJM=') ||
+          token.startsWith('FSIZE')) {
+        continue;
+      }
+
+      final split = token.split(',');
+      if (split.length != 2) continue;
+
+      final xPart = split[0];
+      final yPart = split[1];
+      final draw = _prefixOf(xPart) == 'D' || _prefixOf(yPart) == 'D';
+
+      final xDecoded = SjmCipher.decrypt(keyMap, _stripPrefix(xPart));
+      final yDecoded = SjmCipher.decrypt(keyMap, _stripPrefix(yPart));
+      if (xDecoded == null || yDecoded == null) continue;
+
+      final xVal = int.tryParse(xDecoded);
+      final yVal = int.tryParse(yDecoded);
+      if (xVal == null || yVal == null) continue;
+      if (xVal == 0 && yVal == 0) continue;
+
+      points.add(Offset(xVal.toDouble(), yVal.toDouble()));
+      drawFlags.add(draw);
+    }
+
+    return _calculateBounds(points, drawFlags);
   }
 
   static CutPathData? _decodeSjcPathData(String text) {

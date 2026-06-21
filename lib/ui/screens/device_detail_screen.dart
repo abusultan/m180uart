@@ -352,8 +352,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   }
 
   bool get _isDqMachine {
-    final serial = _bluetooth.serialNumber?.trim().toUpperCase() ?? '';
-    return serial.startsWith('DQ');
+    return _settingsScope == CutSettingsService.scopeDq;
   }
 
   String _normalizedAgentType() {
