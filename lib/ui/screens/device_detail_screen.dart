@@ -17,6 +17,11 @@ import '../widgets/svg_renderer_widget.dart';
 import '../../core/cut_text_overlay_service.dart';
 import '../widgets/text_overlay_interactive_viewer.dart';
 import 'cut_text_overlay_sheet.dart';
+import '../../core/dq_custom_cut.dart';
+import '../../core/dq_cut_service.dart';
+import 'dq_custom_cut_screen.dart';
+import 'dq_text_on_cut_screen.dart';
+import '../../core/sjm_cipher.dart';
 
 class DeviceDetailScreen extends StatefulWidget {
   final ProductItem? productItem;
@@ -29,6 +34,7 @@ class DeviceDetailScreen extends StatefulWidget {
 
 class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   final CutterBluetoothService _bluetooth = CutterBluetoothService();
+  late final DqCutService _dqCutService = DqCutService(_bluetooth);
   final CutSettingsService _cutSettings = CutSettingsService();
 
   int _defaultSpeed = 15;
@@ -191,6 +197,35 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   }
 
   Future<void> _openCatalogTextOverlay() async {
+    // For DQ SJM files: use dedicated screen with proper coordinate handling
+    if (_cutFile != null && CutFileTransformer.isSjmBytes(await _cutFile!.readAsBytes())) {
+      final bytes = await _cutFile!.readAsBytes();
+      if (!mounted) return;
+      final result = await Navigator.push<DqTextOnCutResult>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => DqTextOnCutScreen(cutFileBytes: bytes),
+        ),
+      );
+      if (result != null && mounted) {
+        // Replace cut file with merged version (for cutting)
+        await _cutFile!.writeAsBytes(result.mergedBytes);
+        // Decode merged file to show shape + text in preview
+        final decoded = CutFileTransformer.decodePathData(result.mergedBytes);
+        if (decoded != null && mounted) {
+          setState(() {
+            _previewData = decoded;
+          });
+        }
+      } else if (mounted) {
+        // User cancelled - clear any previous text overlay state
+        setState(() {
+          _catalogTextOverlay = null;
+        });
+      }
+      return;
+    }
+
     final result = await showCutTextOverlaySheet(
       context,
       initialSpec: _catalogTextOverlay,
@@ -206,6 +241,82 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       setState(() {
         _catalogTextOverlay = result.spec;
       });
+    }
+  }
+
+  Future<void> _openDqCustomCut() async {
+    if (_isCutting) return;
+
+    final maxWidth = 190; // Default max width for DQ machines
+    if (!mounted) return;
+
+    final spec = await Navigator.push<DqCustomCutResult>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => DqCustomCutScreen(maxWidth: maxWidth),
+      ),
+    );
+
+    if (!mounted || spec == null) {
+      return;
+    }
+
+    await _executeDqCustomCut(spec);
+  }
+
+  Future<void> _executeDqCustomCut(DqCustomCutResult spec) async {
+    if (_isCutting) return;
+    setState(() {
+      _isCutting = true;
+      _status = AppStrings.of(context, 'status_verifying_balance');
+    });
+
+    try {
+      final buildResult = DqCustomCutBuilder.build(
+        spec: spec,
+        mirrorX: false,
+      );
+
+      final bytesToSend = buildResult.bytes;
+
+      setState(() => _status = AppStrings.of(context, 'status_sending_data'));
+
+      final cutSpeed = _defaultSpeed;
+      final cutPressure = _defaultPressure;
+      await _dqCutService.applySpeedAndPressure(speed: cutSpeed, pressure: cutPressure);
+
+      setState(() => _status = AppStrings.of(context, 'status_sync_handshake'));
+      final handshakeSuccess = await _dqCutService.performPreCutHandshake(
+        isRockspace: false,
+      );
+      if (!handshakeSuccess) {
+        throw Exception(AppStrings.of(context, 'error_handshake_failed'));
+      }
+
+      await _dqCutService.sendCutData(bytesToSend);
+
+      setState(() => _status = AppStrings.of(context, 'status_cutting'));
+      final fsize = await _dqCutService.waitForFsize();
+      await _dqCutService.recordCutHistory(
+        fsize: fsize,
+        agent: _bluetooth.cachedAgentType ?? 'DQ_UART',
+        productName: 'Custom Cut ${spec.width}x${spec.height}',
+      );
+      await _dqCutService.incrementCutCounter();
+      // Not recording offline cut to not decrement balance for Custom Cut since product ID is not set
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString()), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCutting = false;
+          _status = AppStrings.of(context, 'status_idle');
+        });
+      }
     }
   }
 
@@ -244,6 +355,11 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   bool get _isMtDqMachine {
     final serial = _bluetooth.serialNumber?.trim().toUpperCase() ?? '';
     return serial.startsWith('MT');
+  }
+
+  bool get _isDqMachine {
+    final serial = _bluetooth.serialNumber?.trim().toUpperCase() ?? '';
+    return serial.startsWith('DQ');
   }
 
   String _normalizedAgentType() {
@@ -482,6 +598,58 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
           widget.productItem?.productId ?? widget.productItem?.id ?? 0;
       if (productIdForDecrement <= 0) {
         throw Exception('Product ID is missing');
+      }
+
+      if (_isDqMachine) {
+        setState(() => _status = AppStrings.of(context, 'status_sending_data'));
+        final preparation = await _prepareCutPayload(allowMaxWidthRequest: true);
+        if (preparation == null) throw Exception(fileNotFoundMessage);
+        
+        final cutSpeed = _defaultSpeed;
+        final cutPressure = _defaultPressure;
+        await _dqCutService.applySpeedAndPressure(speed: cutSpeed, pressure: cutPressure);
+        
+        setState(() => _status = AppStrings.of(context, 'status_sync_handshake'));
+        final handshakeSuccess = await _dqCutService.performPreCutHandshake(
+          isRockspace: false,
+        );
+        if (!handshakeSuccess) throw Exception(handshakeFailedMessage);
+        
+        await _dqCutService.sendCutData(preparation.bytes);
+        
+        setState(() => _status = AppStrings.of(context, 'status_verifying_balance'));
+        int? cutterIdForDecrement;
+        if ((_bluetooth.serialNumber ?? '').isNotEmpty) {
+          cutterIdForDecrement = await ApiService().getCutterIdBySerialNumber(_bluetooth.serialNumber!);
+        }
+        final decrementResult = await ApiService().decrementRemainingPieces(
+          productId: productIdForDecrement,
+          cutterId: cutterIdForDecrement,
+        );
+        if (decrementResult['success'] != true) {
+          throw Exception(decrementResult['message']?.toString() ?? notEnoughPiecesMessage);
+        }
+        
+        setState(() => _status = AppStrings.of(context, 'status_cutting'));
+        final fsize = await _dqCutService.waitForFsize();
+        await _dqCutService.recordCutHistory(
+          fsize: fsize,
+          agent: _bluetooth.cachedAgentType ?? 'DQ_UART',
+          productName: widget.productItem?.title ?? 'Unknown DQ Product',
+        );
+        await _dqCutService.incrementCutCounter();
+        await _dqCutService.recordOfflineCut(
+          productId: productIdForDecrement,
+          serial: _bluetooth.serialNumber ?? '',
+        );
+        
+        if (mounted) {
+          setState(() {
+            _isCutting = false;
+            _status = AppStrings.of(context, 'status_idle');
+          });
+        }
+        return;
       }
 
       int? cutterIdForDecrement;
@@ -985,7 +1153,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                   overflow: TextOverflow.ellipsis,
                 ),
                 const Spacer(),
-                if (widget.productItem != null && _settingsScope == CutSettingsService.scopeSunshine)
+                if (widget.productItem != null && (_settingsScope == CutSettingsService.scopeSunshine || _isDqMachine))
                   Padding(
                     padding: const EdgeInsets.only(bottom: 12.0),
                     child: SizedBox(
@@ -1011,6 +1179,25 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                                 ? const Color(0xFF00FF88)
                                 : Colors.white24,
                           ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (_isDqMachine && widget.productItem == null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12.0),
+                    child: SizedBox(
+                      height: isLandscape ? 44 : 50,
+                      child: OutlinedButton.icon(
+                        onPressed: _openDqCustomCut,
+                        icon: const Icon(Icons.crop_free),
+                        label: Text(AppStrings.of(context, 'custom_cut') ?? 'Custom Cut'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white70,
+                          side: const BorderSide(color: Colors.white24),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14),
                           ),

@@ -43,6 +43,14 @@ class CutFileTransformer {
     '9': '1',
   };
 
+  static bool isSjmBytes(List<int> inputBytes) {
+    try {
+      return latin1.decode(inputBytes).contains('SJM=');
+    } catch (_) {
+      return false;
+    }
+  }
+
   static bool isSjcBytes(List<int> inputBytes) {
     try {
       return latin1.decode(inputBytes).contains('WSJP=');
