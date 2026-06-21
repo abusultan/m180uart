@@ -122,7 +122,7 @@ class _CutTextOverlaySheetState extends State<_CutTextOverlaySheet> {
           TextField(
             controller: _controller,
             textCapitalization: TextCapitalization.characters,
-            style: const TextStyle(color: Colors.white),
+            style: TextStyle(color: Colors.white, fontFamily: _fontFamily),
             decoration: InputDecoration(
               labelText: AppStrings.of(context, 'text_overlay_field'),
               labelStyle: const TextStyle(color: Colors.white70),
