@@ -16,7 +16,7 @@ publish_to: "none" # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.49+52
+version: 1.0.50+53
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -90,6 +90,15 @@ flutter:
     - family: Stencil
       fonts:
         - asset: assets/fonts/StardosStencil-Regular.ttf
+    - family: Oswald
+      fonts:
+        - asset: assets/fonts/Oswald.ttf
+    - family: Righteous
+      fonts:
+        - asset: assets/fonts/Righteous.ttf
+    - family: Cinzel
+      fonts:
+        - asset: assets/fonts/Cinzel.ttf
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

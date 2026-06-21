@@ -405,6 +405,15 @@ class TextOverlayFonts {
 
   static final Map<String, List<List<Offset>>> _stencilRegularGlyphs =
       FontGlyphsData.stencilRegular;
+      
+  static final Map<String, List<List<Offset>>> _oswaldGlyphs =
+      FontGlyphsData.oswaldGlyphs;
+      
+  static final Map<String, List<List<Offset>>> _righteousGlyphs =
+      FontGlyphsData.righteousGlyphs;
+      
+  static final Map<String, List<List<Offset>>> _cinzelGlyphs =
+      FontGlyphsData.cinzelGlyphs;
 
   static final Map<String, CutTextFontProfile> registry = {
     'AdobeGothic': CutTextFontProfile(glyphs: _adobeGothicGlyphs),
@@ -417,6 +426,24 @@ class TextOverlayFonts {
     'Stencil': CutTextFontProfile(
       glyphs: _stencilRegularGlyphs,
       widthScale: 1.1,
+      heightScale: 1.0,
+      gapScale: 1.0,
+    ),
+    'Oswald': CutTextFontProfile(
+      glyphs: _oswaldGlyphs,
+      widthScale: 1.0,
+      heightScale: 1.0,
+      gapScale: 1.0,
+    ),
+    'Righteous': CutTextFontProfile(
+      glyphs: _righteousGlyphs,
+      widthScale: 1.05,
+      heightScale: 1.0,
+      gapScale: 1.0,
+    ),
+    'Cinzel': CutTextFontProfile(
+      glyphs: _cinzelGlyphs,
+      widthScale: 1.05,
       heightScale: 1.0,
       gapScale: 1.0,
     ),
