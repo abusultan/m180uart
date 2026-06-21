@@ -1,0 +1,33 @@
+#!/usr/bin/expect -f
+set timeout -1
+set host "158.220.127.50"
+set port "2222"
+set user "root"
+set password "m0uvCboqJ50ro6hNQ5Cc"
+
+spawn ssh -p $port -o StrictHostKeyChecking=no $user@$host "mkdir -p /root/apk_chunks"
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    eof
+}
+
+spawn sh -c "scp -P $port -o StrictHostKeyChecking=no chunk_* $user@$host:/root/apk_chunks/"
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    eof
+}
+
+spawn ssh -p $port -o StrictHostKeyChecking=no $user@$host "cd /root/apk_chunks && cat chunk_* | tar xz -C /var/www/cutter/public/ && rm -rf /root/apk_chunks"
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    eof
+}

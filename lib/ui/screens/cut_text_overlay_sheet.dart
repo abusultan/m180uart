@@ -151,6 +151,10 @@ class _CutTextOverlaySheetState extends State<_CutTextOverlaySheet> {
                 value: 'AlibabaBlack',
                 child: Text('Alibaba Black'),
               ),
+              DropdownMenuItem(
+                value: 'Stencil',
+                child: Text('Stencil'),
+              ),
             ],
             onChanged: (value) {
               if (value == null) return;

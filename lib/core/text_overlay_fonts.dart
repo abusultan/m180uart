@@ -403,6 +403,9 @@ class TextOverlayFonts {
   static final Map<String, List<List<Offset>>> _alibabaBlackGlyphs =
       FontGlyphsData.alibabaBlack;
 
+  static final Map<String, List<List<Offset>>> _stencilRegularGlyphs =
+      FontGlyphsData.stencilRegular;
+
   static final Map<String, CutTextFontProfile> registry = {
     'AdobeGothic': CutTextFontProfile(glyphs: _adobeGothicGlyphs),
     'AlibabaBlack': CutTextFontProfile(
@@ -410,6 +413,12 @@ class TextOverlayFonts {
       widthScale: 1.05,
       heightScale: 1.0,
       gapScale: 0.9,
+    ),
+    'Stencil': CutTextFontProfile(
+      glyphs: _stencilRegularGlyphs,
+      widthScale: 1.1,
+      heightScale: 1.0,
+      gapScale: 1.0,
     ),
   };
 

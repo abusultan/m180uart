@@ -1,0 +1,26 @@
+#!/usr/bin/expect -f
+set timeout 30
+set host "158.220.127.50"
+set port "2222"
+set user "root"
+set password "m0uvCboqJ50ro6hNQ5Cc"
+
+# First, scp the file
+spawn scp -P $port -o StrictHostKeyChecking=no add_upload.sh $user@$host:/root/add_upload.sh
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    eof
+}
+
+# Then ssh in and execute
+spawn ssh -p $port -o StrictHostKeyChecking=no $user@$host "bash /root/add_upload.sh"
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    eof
+}

@@ -1,0 +1,15 @@
+#!/usr/bin/expect -f
+set timeout -1
+set host "158.220.127.50"
+set port "2222"
+set user "root"
+set password "m0uvCboqJ50ro6hNQ5Cc"
+
+spawn scp -P $port -o StrictHostKeyChecking=no updateuart.apk version.json $user@$host:/var/www/cutter/public/
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    eof
+}
