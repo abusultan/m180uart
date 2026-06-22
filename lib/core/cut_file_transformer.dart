@@ -1,14 +1,18 @@
+import 'sjm_rotator.dart';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
 import 'sjm_cipher.dart';
+
 class CutPayloadPreparation {
   const CutPayloadPreparation({
     required this.bytes,
     required this.previewData,
     required this.isSjcFile,
+    required this.isSjmFile,
     required this.maxWidth,
     required this.shouldNormalizeSjc,
+    required this.appliedDqNarrowTransform,
     required this.keepsOriginalSjcPrefix,
     required this.rebasedWideSjcToOrigin,
     required this.rebasedPltToOrigin,
@@ -19,8 +23,10 @@ class CutPayloadPreparation {
   final List<int> bytes;
   final CutPathData? previewData;
   final bool isSjcFile;
+  final bool isSjmFile;
   final int? maxWidth;
   final bool shouldNormalizeSjc;
+  final bool appliedDqNarrowTransform;
   final bool keepsOriginalSjcPrefix;
   final bool rebasedWideSjcToOrigin;
   final bool rebasedPltToOrigin;
@@ -30,6 +36,19 @@ class CutPayloadPreparation {
 
 class CutFileTransformer {
   static const String _legacyNarrowOutputMapping = '6240092912';
+  static const String _editableDqSjmSeed = '515167676782828';
+  static const Map<String, String> _dqSjmDigitMap = {
+    '0': '1',
+    '1': '0',
+    '2': '7',
+    '3': '3',
+    '4': '5',
+    '5': '6',
+    '6': '4',
+    '7': '8',
+    '8': '2',
+    '9': '9',
+  };
   static const Map<String, String> _legacyNarrowDigitMap = {
     '0': '2',
     '1': '0',
@@ -43,6 +62,14 @@ class CutFileTransformer {
     '9': '1',
   };
 
+  static bool isSjcBytes(List<int> inputBytes) {
+    try {
+      return latin1.decode(inputBytes).contains('WSJP=');
+    } catch (_) {
+      return false;
+    }
+  }
+
   static bool isSjmBytes(List<int> inputBytes) {
     try {
       return latin1.decode(inputBytes).contains('SJM=');
@@ -51,9 +78,42 @@ class CutFileTransformer {
     }
   }
 
-  static bool isSjcBytes(List<int> inputBytes) {
+  static String? extractSjmSeedFromBytes(List<int> inputBytes) {
     try {
-      return latin1.decode(inputBytes).contains('WSJP=');
+      return extractSjmSeedFromText(latin1.decode(inputBytes));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static String? extractSjmSeedFromText(String text) {
+    final match = RegExp(r'SJM=([0-9A-Za-z]+)').firstMatch(text);
+    return match?.group(1);
+  }
+
+  static List<String>? extractSjcEncodingMap(List<int> inputBytes) {
+    try {
+      final text = latin1.decode(inputBytes).trim();
+      if (!text.contains('WSJP=')) return null;
+      final normalized = text.replaceAll('IN ', '').replaceAll(' @', '').trim();
+      final parts = normalized.split(RegExp(r'\s+'));
+      if (parts.isEmpty) return null;
+      final header = parts.first;
+      if (!header.contains('WSJP=')) return null;
+      return _buildMapping(header.replaceAll('WSJP=', ''));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static String encodeWithDigitMapping(String value, List<String> mapping) {
+    return _encodeNumber(value, mapping);
+  }
+
+  static bool supportsEditableSjmBytes(List<int> inputBytes) {
+    try {
+      final text = latin1.decode(inputBytes);
+      return _supportsEditableSjmText(text);
     } catch (_) {
       return false;
     }
@@ -76,7 +136,7 @@ class CutFileTransformer {
     try {
       text = latin1.decode(inputBytes);
       // FORCED PEN-UP: Sunshine Vertical machines MANDATE a U0,0 (Pen-Up) at start.
-      // If the file doesn't have it, the machine interprets the first move as a DRAG 
+      // If the file doesn't have it, the machine interprets the first move as a DRAG
       // from the last known physical position, causing the vertical offset.
       if (text.contains('U0,0')) {
         return inputBytes;
@@ -232,39 +292,47 @@ class CutFileTransformer {
     bool autoMirror = false,
     bool preferOriginAlignedBackCut = false,
     bool isSunshineMachine = false,
+    bool isDqMachine = false,
   }) {
     var preparedBytes = List<int>.from(inputBytes);
     final isSjcFile = isSjcBytes(preparedBytes);
-    final isPltFile = !isSjcFile && isPltBytes(preparedBytes);
-    final shouldNormalizeSjc = isSunshineMachine &&
-        isSjcFile &&
-        maxWidth != null &&
-        maxWidth > 0 &&
-        maxWidth < 160;
+    final isSjmFile = !isSjcFile && isSjmBytes(preparedBytes);
+    final isPltFile = !isSjcFile && !isSjmFile && isPltBytes(preparedBytes);
+    final shouldTransformDqNarrow =
+        isDqMachine && !isSjcFile && maxWidth != null && maxWidth > 0 && maxWidth < 160;
+    // Sunshine machines: send the file exactly as downloaded from server.
+    // No transformation needed — the file's positioning depends on how it was
+    // generated server-side (the original server centers files based on maxWidth).
+    final shouldNormalizeSjc = !isSunshineMachine &&
+        isSjcFile && maxWidth != null && maxWidth > 0 && maxWidth < 160;
     final keepsOriginalSjcPrefix = isSjcFile && !shouldNormalizeSjc;
     bool rebasedWideSjcToOrigin = false;
     bool rebasedPltToOrigin = false;
+    bool appliedDqNarrowTransform = false;
 
-    // Sunshine machines: send the file exactly as downloaded from server.
-    // The file's positioning depends on how it was generated server-side.
-    // The original server centers files based on maxWidth parameter.
-    if (isSunshineMachine && isSjcFile) {
-      // No transformation — send as-is
+    if (!isSunshineMachine && isSjcFile && shouldNormalizeSjc) {
+      final rebasedBytes = rebaseWideSjcToOriginIfNeeded(
+        inputBytes: preparedBytes,
+      );
+      rebasedWideSjcToOrigin = !_listsEqual(rebasedBytes, preparedBytes);
+      preparedBytes = rebasedBytes;
     }
 
-    if (preferOriginAlignedBackCut && isPltFile) {
-      final pltRebasedBytes = rebasePltToOriginIfNeeded(inputBytes: preparedBytes);
-      rebasedPltToOrigin = !_listsEqual(pltRebasedBytes, preparedBytes);
-      preparedBytes = pltRebasedBytes;
-    }
-
-    if (preferOriginAlignedBackCut && isPltFile) {
+    if (!isSunshineMachine && preferOriginAlignedBackCut && isPltFile && !isDqMachine) {
       final rebasedBytes = rebasePltToOriginIfNeeded(inputBytes: preparedBytes);
       rebasedPltToOrigin = !_listsEqual(rebasedBytes, preparedBytes);
       preparedBytes = rebasedBytes;
     }
 
-    final appliedAngle = isSjcFile && angleDegrees != 0;
+    if (shouldTransformDqNarrow) {
+      final transformedBytes = transformDqNarrowPayloadIfNeeded(
+        inputBytes: preparedBytes,
+      );
+      appliedDqNarrowTransform = !_listsEqual(transformedBytes, preparedBytes);
+      preparedBytes = transformedBytes;
+    }
+
+    final appliedAngle = !isSunshineMachine && (isSjcFile || isSjmFile) && angleDegrees != 0;
     if (appliedAngle) {
       preparedBytes = applyAngleToBytes(
         inputBytes: preparedBytes,
@@ -272,17 +340,29 @@ class CutFileTransformer {
       );
     }
 
-    final appliedMirror = autoMirror && isSjcFile;
-    if (autoMirror) {
-      preparedBytes = applyMirrorToBytes(inputBytes: preparedBytes);
+    final appliedMirror = !isSunshineMachine && autoMirror && (isSjcFile || isSjmFile);
+    if (appliedMirror) {
+      if (isSjcFile) {
+        preparedBytes = applyMirrorToBytes(inputBytes: preparedBytes);
+      } else if (isSjmFile) {
+        preparedBytes = SjmRotator.applyMirrorToSjmBytes(inputBytes: preparedBytes);
+      }
+    }
+
+    if (!isSunshineMachine && shouldNormalizeSjc) {
+      preparedBytes = rebuildSjcForNarrowLegacyCutter(
+        inputBytes: preparedBytes,
+      );
     }
 
     return CutPayloadPreparation(
       bytes: preparedBytes,
       previewData: decodePathData(preparedBytes),
       isSjcFile: isSjcFile,
+      isSjmFile: isSjmFile,
       maxWidth: maxWidth,
       shouldNormalizeSjc: shouldNormalizeSjc,
+      appliedDqNarrowTransform: appliedDqNarrowTransform,
       keepsOriginalSjcPrefix: keepsOriginalSjcPrefix,
       rebasedWideSjcToOrigin: rebasedWideSjcToOrigin,
       rebasedPltToOrigin: rebasedPltToOrigin,
@@ -349,6 +429,37 @@ class CutFileTransformer {
         .join(';');
 
     return latin1.encode(rebuilt);
+  }
+
+  static List<int> transformDqNarrowPayloadIfNeeded({
+    required List<int> inputBytes,
+  }) {
+    String text;
+    try {
+      text = latin1.decode(inputBytes);
+    } catch (_) {
+      return inputBytes;
+    }
+
+    if (!text.contains('FSIZE') &&
+        !RegExp(r'([UD])-?\d+,-?\d+').hasMatch(text)) {
+      return inputBytes;
+    }
+
+    final swappedFsize = text.replaceAllMapped(
+      RegExp(r'FSIZE(-?\d+),(-?\d+)'),
+      (match) => 'FSIZE${match.group(2)},${match.group(1)}',
+    );
+    final swappedCoords = swappedFsize.replaceAllMapped(
+      RegExp(r'([UD])(-?\d+),(-?\d+)'),
+      (match) => '${match.group(1)}${match.group(3)},${match.group(2)}',
+    );
+
+    if (swappedCoords == text) {
+      return inputBytes;
+    }
+
+    return latin1.encode(swappedCoords);
   }
 
   static String _formatPltNumber(double value) {
@@ -443,7 +554,7 @@ class CutFileTransformer {
       }
       point.x -= minX;
       point.y -= minY;
-      
+
       // ABSOLUTE PROTECTION: Ensure coordinates never clip negative (this causes vertical shifts on large machines)
       if (point.x < 0) point.x = 0;
       if (point.y < 0) point.y = 0;
@@ -476,69 +587,16 @@ class CutFileTransformer {
     }
 
     final trimmed = text.trim();
-    if (trimmed.contains('SJM=')) {
-      return _decodeSjmPathData(trimmed);
-    } else if (trimmed.contains('WSJP=')) {
+    if (trimmed.contains('WSJP=')) {
       return _decodeSjcPathData(trimmed);
+    } else if (trimmed.contains('SJM=')) {
+      return _decodeSjmPathData(trimmed);
     } else if (trimmed.contains('PU') ||
         trimmed.contains('PD') ||
         trimmed.contains('PA')) {
       return _decodePltPathData(trimmed);
     }
     return null;
-  }
-
-  static CutPathData? _decodeSjmPathData(String text) {
-    final seed = SjmCipher.extractSeed(text);
-    if (seed == null || seed.length < 15) return null;
-
-    final keyMap = SjmCipher.generateKeyMap(seed);
-    if (keyMap == null) return null;
-
-    final cleaned = text
-        .replaceAll('IN ', '')
-        .replaceAll('@', '')
-        .replaceAll(';', ' ')
-        .trim();
-    if (!cleaned.contains('SJM=')) return null;
-
-    final tokens = cleaned
-        .split(RegExp(r'\s+'))
-        .where((token) => token.isNotEmpty)
-        .toList(growable: false);
-    if (tokens.isEmpty) return null;
-
-    final points = <Offset>[];
-    final drawFlags = <bool>[];
-
-    for (final token in tokens) {
-      if (token == 'IN' ||
-          token.contains('SJM=') ||
-          token.startsWith('FSIZE')) {
-        continue;
-      }
-
-      final split = token.split(',');
-      if (split.length != 2) continue;
-
-      final xPart = split[0];
-      final yPart = split[1];
-      final draw = _prefixOf(xPart) == 'D' || _prefixOf(yPart) == 'D';
-
-      final xDecoded = SjmCipher.decrypt(keyMap, _stripPrefix(xPart));
-      final yDecoded = SjmCipher.decrypt(keyMap, _stripPrefix(yPart));
-      if (xDecoded == null || yDecoded == null) continue;
-
-      final xVal = int.tryParse(xDecoded);
-      final yVal = int.tryParse(yDecoded);
-      if (xVal == null || yVal == null) continue;
-      if (xVal == 0 && yVal == 0) continue;
-
-      points.add(Offset(xVal.toDouble(), yVal.toDouble()));
-      drawFlags.add(draw);
-    }
-
-    return _calculateBounds(points, drawFlags);
   }
 
   static CutPathData? _decodeSjcPathData(String text) {
@@ -581,6 +639,149 @@ class CutFileTransformer {
     return _calculateBounds(points, drawFlags);
   }
 
+  static CutPathData? _decodeSjmPathData(String text) {
+    // Extract seed and generate dynamic key map
+    final seed = extractSjmSeedFromText(text);
+    if (seed == null || seed.length < 15) return null;
+
+    final keyMap = _generateSjmKeyMap(seed);
+    if (keyMap == null) return null;
+
+    final fsize = SjmCipher.decryptFsize(keyMap, text);
+
+    final cleaned = text
+        .replaceAll('IN ', '')
+        .replaceAll('@', '')
+        .replaceAll(';', ' ')
+        .trim();
+    if (!cleaned.contains('SJM=')) return null;
+
+    final tokens = cleaned
+        .split(RegExp(r'\s+'))
+        .where((token) => token.isNotEmpty)
+        .toList(growable: false);
+    if (tokens.isEmpty) return null;
+
+    final points = <Offset>[];
+    final drawFlags = <bool>[];
+
+    for (final token in tokens) {
+      if (token == 'IN' ||
+          token.contains('SJM=') ||
+          token.startsWith('FSIZE')) {
+        continue;
+      }
+
+      final split = token.split(',');
+      if (split.length != 2) continue;
+
+      final xPart = split[0];
+      final yPart = split[1];
+      final draw = _prefixOf(xPart) == 'D' || _prefixOf(yPart) == 'D';
+
+      final xDecoded = _decryptWithKeyMap(keyMap, _stripPrefix(xPart));
+      final yDecoded = _decryptWithKeyMap(keyMap, _stripPrefix(yPart));
+      if (xDecoded == null || yDecoded == null) continue;
+
+      final xVal = int.tryParse(xDecoded);
+      final yVal = int.tryParse(yDecoded);
+      if (xVal == null || yVal == null) continue;
+      if (xVal == 0 && yVal == 0) continue;
+
+      points.add(Offset(xVal.toDouble(), yVal.toDouble()));
+      drawFlags.add(draw);
+    }
+
+    if (points.isEmpty) return null;
+    return _calculateBounds(
+      points,
+      drawFlags,
+      fsizeWidth: fsize?.width.toDouble(),
+      fsizeHeight: fsize?.height.toDouble(),
+    );
+  }
+
+  // Index arrays for SJM key generation (from JNI reverse engineering)
+  static const List<int> _sjmNumArr1 = [2, 4, 6, 8, 10, 12, 14, 3, 5, 7];
+  static const List<int> _sjmNumArr2 = [3, 12, 0, 7, 4, 1, 9, 13, 8, 11];
+  static const List<int> _sjmNumArr3 = [3, 5, 6, 8, 4, 1, 9, 13, 7, 11];
+  static const List<int> _sjmNumArr4 = [1, 3, 7, 9, 2, 6, 4, 12, 13, 5];
+  static const List<int> _sjmNumArr5 = [2, 4, 7, 9, 3, 6, 4, 10, 13, 1];
+
+  /// Generate key map from 15-digit SJM seed (replaces JNI cmd_GetPassWordCutChar)
+  static List<String>? _generateSjmKeyMap(String seed) {
+    if (seed.length < 15) return null;
+
+    final charArray = seed.split('');
+    final lastChar = charArray[14];
+
+    List<int> numArr;
+    switch (lastChar) {
+      case '1': numArr = _sjmNumArr1; break;
+      case '2': numArr = _sjmNumArr2; break;
+      case '3': numArr = _sjmNumArr3; break;
+      case '8': numArr = _sjmNumArr4; break;
+      case '9': numArr = _sjmNumArr5; break;
+      default: numArr = _sjmNumArr4; break;
+    }
+
+    final keyMap = <String>[];
+    for (int i = 0; i < 10; i++) {
+      if (numArr[i] >= charArray.length) return null;
+      keyMap.add(charArray[numArr[i]]);
+    }
+
+    final unusedDigits = List<int>.generate(10, (i) => i);
+    for (int i = 0; i < 10; i++) {
+      for (int j = 0; j < keyMap.length; j++) {
+        final parsed = int.tryParse(keyMap[j]);
+        if (parsed != null && unusedDigits[i] == parsed) {
+          unusedDigits[i] = -1;
+          break;
+        }
+      }
+    }
+
+    for (int i = 0; i < keyMap.length; i++) {
+      if (keyMap[i] != 's') {
+        for (int j = i + 1; j < keyMap.length; j++) {
+          if (keyMap[j] == keyMap[i]) keyMap[j] = 's';
+        }
+      }
+    }
+
+    int unusedIdx = 0;
+    for (int i = 0; i < keyMap.length; i++) {
+      if (keyMap[i] == 's') {
+        while (unusedIdx < 10 && unusedDigits[unusedIdx] == -1) {
+          unusedIdx++;
+        }
+        if (unusedIdx < 10) {
+          keyMap[i] = unusedDigits[unusedIdx].toString();
+          unusedDigits[unusedIdx] = -1;
+        }
+      }
+    }
+
+    return keyMap;
+  }
+
+  /// Decrypt a number string using a dynamic SJM key map
+  static String? _decryptWithKeyMap(List<String> keyMap, String value) {
+    if (value.isEmpty) return null;
+    final buffer = StringBuffer();
+    for (final ch in value.split('')) {
+      if (ch == '-') {
+        buffer.write(ch);
+      } else {
+        final idx = keyMap.indexOf(ch);
+        if (idx < 0) return null;
+        buffer.write(idx);
+      }
+    }
+    return buffer.toString();
+  }
+
   static CutPathData? _decodePltPathData(String text) {
     final points = <Offset>[];
     final drawFlags = <bool>[];
@@ -596,9 +797,9 @@ class CutFileTransformer {
         isDown = false;
         final coords = trimmed.substring(2).trim();
         if (coords.isNotEmpty) {
-          final p = _parsePltCoords(coords);
-          if (p != null) {
-            points.add(p);
+          final pairs = _parsePltCoordinatePairs(coords);
+          for (final point in pairs) {
+            points.add(point);
             drawFlags.add(false);
           }
         }
@@ -606,18 +807,18 @@ class CutFileTransformer {
         isDown = true;
         final coords = trimmed.substring(2).trim();
         if (coords.isNotEmpty) {
-          final p = _parsePltCoords(coords);
-          if (p != null) {
-            points.add(p);
+          final pairs = _parsePltCoordinatePairs(coords);
+          for (final point in pairs) {
+            points.add(point);
             drawFlags.add(true);
           }
         }
       } else if (trimmed.startsWith('PA')) {
         final coords = trimmed.substring(2).trim();
         if (coords.isNotEmpty) {
-          final p = _parsePltCoords(coords);
-          if (p != null) {
-            points.add(p);
+          final pairs = _parsePltCoordinatePairs(coords);
+          for (final point in pairs) {
+            points.add(point);
             drawFlags.add(isDown);
           }
         }
@@ -637,10 +838,33 @@ class CutFileTransformer {
     return Offset(x, y);
   }
 
+  static List<Offset> _parsePltCoordinatePairs(String coords) {
+    final values = coords
+        .split(',')
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty)
+        .toList(growable: false);
+    if (values.length < 2) {
+      final single = _parsePltCoords(coords);
+      return single == null ? const <Offset>[] : <Offset>[single];
+    }
+
+    final pairs = <Offset>[];
+    for (int i = 0; i + 1 < values.length; i += 2) {
+      final x = double.tryParse(values[i]);
+      final y = double.tryParse(values[i + 1]);
+      if (x == null || y == null) continue;
+      pairs.add(Offset(x, y));
+    }
+    return pairs;
+  }
+
   static CutPathData? _calculateBounds(
     List<Offset> points,
-    List<bool> drawFlags,
-  ) {
+    List<bool> drawFlags, {
+    double? fsizeWidth,
+    double? fsizeHeight,
+  }) {
     if (points.isEmpty) return null;
 
     double minX = points.first.dx;
@@ -652,6 +876,13 @@ class CutFileTransformer {
       if (p.dx > maxX) maxX = p.dx;
       if (p.dy < minY) minY = p.dy;
       if (p.dy > maxY) maxY = p.dy;
+    }
+
+    if (fsizeWidth != null && fsizeHeight != null) {
+      minX = 0;
+      minY = 0;
+      maxX = fsizeWidth;
+      maxY = fsizeHeight;
     }
 
     return CutPathData(
@@ -669,7 +900,7 @@ class CutFileTransformer {
 
     final centerX = data.minX + ((data.maxX - data.minX) / 2.0);
     final centerY = data.minY + ((data.maxY - data.minY) / 2.0);
-    final radians = (angleDegrees * 0.5) * pi / 180.0;
+    final radians = angleDegrees * pi / 180.0;
     final sinA = sin(radians);
     final cosA = cos(radians);
 
@@ -734,8 +965,10 @@ class CutFileTransformer {
       return inputBytes;
     }
 
-    final normalized =
-        trimmed.replaceAll('IN ', '').replaceAll(' @', '').trim();
+    final normalized = trimmed
+        .replaceAll('IN ', '')
+        .replaceAll(' @', '')
+        .trim();
     final parts = normalized.split(RegExp(r'\s+'));
     if (parts.isEmpty) return inputBytes;
 
@@ -814,12 +1047,21 @@ class CutFileTransformer {
     }
 
     final trimmed = text.trim();
+    if (trimmed.contains('IN SJM=')) {
+      return SjmRotator.applyAngleToSjmBytes(
+        inputBytes: inputBytes,
+        angleDegrees: angleDegrees,
+      );
+    }
+    
     if (!trimmed.contains('WSJP=')) {
       return inputBytes;
     }
 
-    final normalized =
-        trimmed.replaceAll('IN ', '').replaceAll(' @', '').trim();
+    final normalized = trimmed
+        .replaceAll('IN ', '')
+        .replaceAll(' @', '')
+        .trim();
     final parts = normalized.split(RegExp(r'\s+'));
     if (parts.isEmpty) return inputBytes;
 
@@ -877,7 +1119,7 @@ class CutFileTransformer {
 
     final centerX = minX + ((maxX - minX) / 2.0);
     final centerY = minY + ((maxY - minY) / 2.0);
-    final radians = (angleDegrees * 0.5) * pi / 180.0;
+    final radians = angleDegrees * pi / 180.0;
     final sinA = sin(radians);
     final cosA = cos(radians);
 
@@ -892,199 +1134,6 @@ class CutFileTransformer {
       final xEncoded = _encodeNumber(p.x.toString(), mapping);
       final yEncoded = _encodeNumber(p.y.toString(), mapping);
       tokens[p.index] = '${p.xPrefix}$xEncoded,${p.yPrefix}$yEncoded';
-    }
-
-    final rebuilt = 'IN ${tokens.join(' ')} @ ';
-    return latin1.encode(rebuilt);
-  }
-
-  /// Strips the leading calibration marks (U0,0 D0,0 D0,XX patterns) from
-  /// the beginning of an SJC file without rebasing or rebuilding the file.
-  /// This prevents the blade from scoring a line at position (0,0) before
-  /// moving to the actual design coordinates.
-  static List<int> _stripCalibrationMarks({required List<int> inputBytes}) {
-    String text;
-    try {
-      text = latin1.decode(inputBytes);
-    } catch (_) {
-      return inputBytes;
-    }
-
-    final trimmed = text.trim();
-    if (!trimmed.contains('WSJP=')) return inputBytes;
-
-    // Strategy: find the pattern "U0,0 D0,0" (or with ;) and remove everything
-    // from U0,0 up to (but not including) the first U or D with non-zero coords.
-    // The file looks like: "IN WSJP=XXX FSIZE...;U0,0 D0,0 D0,60 U9333,1542..."
-    // We want to get:      "IN WSJP=XXX FSIZE...; U9333,1542..."
-
-    // Find FSIZE or WSJP end, then find where calibration starts
-    final wsjpIdx = trimmed.indexOf('WSJP=');
-    if (wsjpIdx == -1) return inputBytes;
-
-    // Find the semicolon after FSIZE (marks end of header)
-    int headerEnd = trimmed.indexOf(';', wsjpIdx);
-    if (headerEnd == -1) {
-      // No semicolon — try space after WSJP value
-      headerEnd = trimmed.indexOf(' ', wsjpIdx + 15);
-      if (headerEnd == -1) return inputBytes;
-    }
-
-    // Everything after the header semicolon is coordinate data
-    final headerPart = trimmed.substring(0, headerEnd + 1);
-    final coordsPart = trimmed.substring(headerEnd + 1).trim();
-
-    // Split coords by space and find first non-zero, non-calibration token
-    final tokens = coordsPart.split(RegExp(r'\s+'));
-    int firstRealIdx = 0;
-
-    for (int i = 0; i < tokens.length; i++) {
-      final token = tokens[i];
-      if (token.isEmpty) continue;
-
-      // Extract prefix and check if it's a zero coordinate
-      final prefix = (token.startsWith('U') || token.startsWith('D'))
-          ? token[0]
-          : '';
-      final coords = prefix.isNotEmpty ? token.substring(1) : token;
-      final parts = coords.split(',');
-
-      if (parts.length != 2) {
-        firstRealIdx = i;
-        break;
-      }
-
-      // Check if both values are zero or very small (calibration)
-      final x = int.tryParse(parts[0]);
-      final y = int.tryParse(parts[1]);
-
-      if (x == null || y == null) {
-        firstRealIdx = i;
-        break;
-      }
-
-      // If X > 0, this is a real coordinate (not calibration)
-      if (x > 100) {
-        firstRealIdx = i;
-        break;
-      }
-
-      // X == 0 and Y small — this is calibration, skip it
-      // Continue to next token
-    }
-
-    if (firstRealIdx == 0) {
-      // No calibration marks found
-      return inputBytes;
-    }
-
-    // Rebuild: header + real coordinates (skip calibration)
-    final realCoords = tokens.sublist(firstRealIdx).join(' ');
-    final rebuilt = '$headerPart $realCoords';
-    return latin1.encode(rebuilt);
-  }
-
-  /// Centers the SJC cut design within the machine's width.
-  /// The original Sunshine server does this server-side when it receives the
-  /// machine maxWidth parameter. Since our server doesn't do this, we
-  /// calculate the offset needed to center the design and shift Y coordinates.
-  ///
-  /// Machine coordinate system: X = length (feed direction), Y = width (lateral)
-  /// maxWidth is in mm * 10 (e.g., 190 means the machine is 190 units wide ~= 19cm usable)
-  static List<int> _centerSjcForMachineWidth({
-    required List<int> inputBytes,
-    required int machineMaxWidth,
-  }) {
-    String text;
-    try {
-      text = latin1.decode(inputBytes);
-    } catch (_) {
-      return inputBytes;
-    }
-
-    final trimmed = text.trim();
-    if (!trimmed.contains('WSJP=')) return inputBytes;
-
-    final normalized =
-        trimmed.replaceAll('IN ', '').replaceAll(' @', '').trim();
-    final parts = normalized.split(RegExp(r'\s+'));
-    if (parts.isEmpty) return inputBytes;
-
-    final header = parts.first;
-    if (!header.contains('WSJP=')) return inputBytes;
-
-    final mappingStr = header.replaceAll('WSJP=', '');
-    final mapping = _buildMapping(mappingStr);
-    if (mapping == null || mapping.length != 10) return inputBytes;
-
-    final tokens = List<String>.from(parts);
-    final decodedPoints = <_PointToken>[];
-
-    for (int i = 1; i < tokens.length; i++) {
-      final token = tokens[i];
-      final split = token.split(',');
-      if (split.length != 2) continue;
-
-      final xPart = split[0];
-      final yPart = split[1];
-      final xPrefix = _prefixOf(xPart);
-      final yPrefix = _prefixOf(yPart);
-      final xDecoded = _decodeNumber(_stripPrefix(xPart), mapping);
-      final yDecoded = _decodeNumber(_stripPrefix(yPart), mapping);
-      if (xDecoded == null || yDecoded == null) continue;
-
-      final xVal = int.tryParse(xDecoded);
-      final yVal = int.tryParse(yDecoded);
-      if (xVal == null || yVal == null) continue;
-
-      decodedPoints.add(_PointToken(
-        index: i,
-        x: xVal,
-        y: yVal,
-        xPrefix: xPrefix,
-        yPrefix: yPrefix,
-      ));
-    }
-
-    if (decodedPoints.isEmpty) return inputBytes;
-
-    // Find the design's Y extent (width dimension)
-    int? minY;
-    int? maxY;
-    for (final point in decodedPoints) {
-      if (point.x == 0 && point.y == 0) continue;
-      minY = minY == null ? point.y : min(minY, point.y);
-      maxY = maxY == null ? point.y : max(maxY, point.y);
-    }
-
-    if (minY == null || maxY == null) return inputBytes;
-
-    final designWidth = maxY - minY;
-    // Machine width in the same coordinate units (maxWidth * 40 to match coordinate scale)
-    final machineWidthUnits = machineMaxWidth * 40;
-
-    if (designWidth >= machineWidthUnits) {
-      // Design is already as wide or wider than machine — no centering needed
-      return inputBytes;
-    }
-
-    // Calculate offset to center the design
-    final offsetY = ((machineWidthUnits - designWidth) ~/ 2) - minY;
-
-    if (offsetY <= 0) {
-      // Already centered or past center
-      return inputBytes;
-    }
-
-    // Apply offset to Y coordinates
-    for (final point in decodedPoints) {
-      if (point.x == 0 && point.y == 0) continue;
-      point.y += offsetY;
-
-      final xEncoded = _encodeNumber(point.x.toString(), mapping);
-      final yEncoded = _encodeNumber(point.y.toString(), mapping);
-      tokens[point.index] =
-          '${point.xPrefix}$xEncoded,${point.yPrefix}$yEncoded';
     }
 
     final rebuilt = 'IN ${tokens.join(' ')} @ ';
@@ -1111,8 +1160,10 @@ class CutFileTransformer {
       return inputBytes;
     }
 
-    final normalized =
-        trimmed.replaceAll('IN ', '').replaceAll(' @', '').trim();
+    final normalized = trimmed
+        .replaceAll('IN ', '')
+        .replaceAll(' @', '')
+        .trim();
     final parts = normalized.split(RegExp(r'\s+'));
     if (parts.isEmpty) return inputBytes;
 
@@ -1268,6 +1319,33 @@ class CutFileTransformer {
     return buffer.toString();
   }
 
+  static String? _decodeSjmNumber(String value) {
+    if (value.isEmpty) return null;
+    final buffer = StringBuffer();
+    for (final rune in value.runes) {
+      final char = String.fromCharCode(rune);
+      if (char == '-') {
+        buffer.write(char);
+        continue;
+      }
+      String? decodedDigit;
+      for (int i = 0; i <= 9; i++) {
+        if (_dqSjmDigitMap[i.toString()] == char) {
+          decodedDigit = i.toString();
+          break;
+        }
+      }
+      if (decodedDigit == null) return null;
+      buffer.write(decodedDigit);
+    }
+    return buffer.toString();
+  }
+
+  static bool _supportsEditableSjmText(String text) {
+    final seed = extractSjmSeedFromText(text);
+    return seed != null && seed.length == 15;
+  }
+
   static String _encodeNumber(String value, List<String> mapping) {
     final buffer = StringBuffer();
     for (final ch in value.split('')) {
@@ -1297,23 +1375,41 @@ class CutFileTransformer {
     return buffer.toString();
   }
 
-  static List<String>? extractSjcEncodingMap(List<int> inputBytes) {
+  static List<int> applyPhonefilmSpeedPressure({
+    required List<int> inputBytes,
+    required int speed,
+    required int pressure,
+  }) {
+    if (speed <= 0 && pressure <= 0) return inputBytes;
+
+    String text;
     try {
-      final text = latin1.decode(inputBytes).trim();
-      if (!text.contains('WSJP=')) return null;
-      final normalized = text.replaceAll('IN ', '').replaceAll(' @', '').trim();
-      final parts = normalized.split(RegExp(r'\s+'));
-      if (parts.isEmpty) return null;
-      final header = parts.first;
-      if (!header.contains('WSJP=')) return null;
-      return _buildMapping(header.replaceAll('WSJP=', ''));
+      text = latin1.decode(inputBytes);
     } catch (_) {
-      return null;
+      return inputBytes;
     }
+
+    if (!text.contains('IN')) return inputBytes;
+
+    final cmd = _buildPhonefilmCmd(speed, pressure);
+    if (cmd.isEmpty) return inputBytes;
+
+    // Follow PhoneFilm behavior: remove existing IN tokens and re-insert with CMD payload.
+    final rebuilt = 'IN $cmd${text.replaceAll('IN', '')}';
+    return latin1.encode(rebuilt);
   }
 
-  static String encodeWithDigitMapping(String value, List<String> mapping) {
-    return _encodeNumber(value, mapping);
+  static String _buildPhonefilmCmd(int speed, int pressure) {
+    final sb = StringBuffer();
+    if (speed >= 1) {
+      final s = speed.clamp(1, 4);
+      sb.write('CMD:100,11,$s;');
+    }
+    if (pressure >= 1) {
+      final p = pressure.clamp(1, 5);
+      sb.write('CMD:100,10,$p;');
+    }
+    return sb.toString();
   }
 }
 

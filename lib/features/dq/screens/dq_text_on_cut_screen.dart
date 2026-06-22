@@ -1,4 +1,3 @@
-import 'package:flutter_project/core/cut_text_overlay_service.dart';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
@@ -6,11 +5,11 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'package:flutter_project/core/app_strings.dart';
-import 'package:flutter_project/core/sjm_cipher.dart';
-import 'package:flutter_project/core/cut_file_transformer.dart';
-import 'package:flutter_project/core/font_path_service.dart';
-import 'package:flutter_project/core/text_overlay_fonts.dart';
+import '../../../core/app_strings.dart';
+import '../../../core/sjm_cipher.dart';
+import '../../../core/cut_file_transformer.dart';
+import '../../../core/font_path_service.dart';
+import '../../../core/text_overlay_fonts.dart';
 
 /// Result returned from DqTextOnCutScreen
 class DqTextOnCutResult {
@@ -36,14 +35,15 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
   final _textController = TextEditingController();
   // Font state
   String _fontFamily = 'AdobeGothic';
+  
   // Decoded cut shape
   List<List<Offset>> _shapePolylines = [];
   double _shapeWidth = 0;
   double _shapeHeight = 0;
-
+  
   // Text polylines (in real machine coords)
   List<List<Offset>> _textPolylines = [];
-
+  
   // User controls
   double _textScale = 0.15;
   double _pinchBaseScale = 0.15;
@@ -51,7 +51,7 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
   double _pinchBaseRotation = 0.0;
   Offset _textOffset = Offset.zero; // normalized 0-1
   bool _isHorizontal = true;
-
+  
   // File info
   String? _seed;
   List<String>? _keyMap;
@@ -74,27 +74,27 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
 
   void _decodeShape() {
     final text = latin1.decode(widget.cutFileBytes).trim();
-
+    
     // Extract seed
     _seed = SjmCipher.extractSeed(text);
     if (_seed == null) return;
-
+    
     _keyMap = SjmCipher.generateKeyMap(_seed!);
     if (_keyMap == null) return;
-
+    
     // Decode FSIZE
     final fsize = SjmCipher.decryptFsize(_keyMap!, text);
     if (fsize != null) {
       _fsizeW = fsize.width;
       _fsizeH = fsize.height;
     }
-
+    
     // Decode all points
     // File format: IN SJM=... FSIZE...;U{y},{x} D{y},{x}...@
     // First coordinate = Y (height axis), Second = X (width axis)
     final pathData = CutFileTransformer.decodePathData(widget.cutFileBytes);
     if (pathData == null || pathData.points.isEmpty) return;
-
+    
     // pathData points from _decodeSjmPathData: Offset(first_decoded, second_decoded)
     // Original app mirrors X axis: draws (maxX - x, y)
     // First: collect all points to find maxX for mirroring
@@ -106,15 +106,15 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
     for (final p in allPoints) {
       if (p.dx > maxFirstCoord) maxFirstCoord = p.dx;
     }
-
+    
     final polylines = <List<Offset>>[];
     var currentPolyline = <Offset>[];
-
+    
     for (int i = 0; i < pathData.points.length; i++) {
       final p = pathData.points[i];
       // Mirror X axis (same as original app: width - x)
       final screenPoint = Offset(maxFirstCoord - p.dx, p.dy);
-
+      
       if (!pathData.drawFlags[i] && currentPolyline.isNotEmpty) {
         polylines.add(currentPolyline);
         currentPolyline = [screenPoint];
@@ -123,7 +123,7 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
       }
     }
     if (currentPolyline.isNotEmpty) polylines.add(currentPolyline);
-
+    
     _shapePolylines = polylines;
     // Use actual bounding box of decoded points for dimensions
     double minX = double.infinity, maxX = double.negativeInfinity;
@@ -138,7 +138,7 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
     }
     _shapeWidth = maxX - minX;
     _shapeHeight = maxY - minY;
-
+    
     setState(() {});
   }
 
@@ -149,18 +149,17 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
       return;
     }
 
-    // Use TextOverlayFonts glyphs
-    final profile = TextOverlayFonts.registry[_fontFamily] ??
-        TextOverlayFonts.registry['AdobeGothic']!;
+    // Use TextOverlayFonts glyphs (proven to work - same as Sunshine text overlay)
+    final profile = TextOverlayFonts.registry[_fontFamily] ?? TextOverlayFonts.registry['AdobeGothic']!;
     final glyphs = profile.glyphs;
-
+    
     // Build polylines for each character
     final rawPolylines = <List<Offset>>[];
     double cursorX = 0;
     double cursorY = 0;
-    final glyphW = 1.0;
-    final glyphH = 1.6;
-    final gap = 0.3;
+    final glyphW = profile.widthScale;
+    final glyphH = profile.heightScale * 1.6;
+    final gap = profile.gapScale * 0.3;
 
     for (final char in text.split('')) {
       final charGlyphs = glyphs[char];
@@ -237,12 +236,10 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
 
     if (mounted) setState(() => _textPolylines = scaledPolylines);
   }
-
   void _save() {
     if (_textPolylines.isEmpty || _keyMap == null || _seed == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('No text to add'), backgroundColor: Colors.red),
+        const SnackBar(content: Text('No text to add'), backgroundColor: Colors.red),
       );
       return;
     }
@@ -250,13 +247,13 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
     // Convert text polylines from screen (X,Y) back to file format (Y,X)
     // Then encrypt with the same seed and append to the file
     final fileText = latin1.decode(widget.cutFileBytes).trim();
-
+    
     // Find the @ marker and insert text before it
     String body = fileText;
     if (body.contains('@')) {
       body = body.substring(0, body.lastIndexOf('@')).trimRight();
     }
-
+    
     // Remove trailing U0,0 if present
     final zero = SjmCipher.encrypt(_keyMap!, '0');
     final endMarker = 'U$zero,$zero';
@@ -268,7 +265,7 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
     // The text polylines are in SCREEN coordinates (mirrored X for display).
     // To write back to file: reverse the mirror (maxFirstCoord - screenX)
     // Then encrypt and write as (first, second) matching file format.
-
+    
     // Find maxFirstCoord (same as used during decode for mirroring)
     double maxFirst = 0;
     final pathData = CutFileTransformer.decodePathData(widget.cutFileBytes);
@@ -277,14 +274,13 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
         if (p.dx > maxFirst) maxFirst = p.dx;
       }
     }
-
+    
     final buffer = StringBuffer();
     for (final polyline in _textPolylines) {
       for (int i = 0; i < polyline.length; i++) {
         final p = polyline[i];
         // Reverse the mirror: file_x = maxFirst - screen_x
-        final isOldFont = _fontFamily == 'AdobeGothic' || _fontFamily == 'AlibabaBlack';
-        final firstCoord = isOldFont ? (maxFirst - p.dx).round() : p.dx.round();
+        final firstCoord = (maxFirst - p.dx).round();
         final secondCoord = p.dy.round();
         final encFirst = SjmCipher.encrypt(_keyMap!, firstCoord.toString());
         final encSecond = SjmCipher.encrypt(_keyMap!, secondCoord.toString());
@@ -311,9 +307,7 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
         actions: [
           TextButton(
             onPressed: _save,
-            child: const Text('SAVE',
-                style: TextStyle(
-                    color: Color(0xFF00E676), fontWeight: FontWeight.bold)),
+            child: const Text('SAVE', style: TextStyle(color: Color(0xFF00E676), fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -338,8 +332,7 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
                   if (details.pointerCount >= 2) {
                     // Pinch to resize + rotate
                     setState(() {
-                      _textScale =
-                          (_pinchBaseScale * details.scale).clamp(0.03, 0.8);
+                      _textScale = (_pinchBaseScale * details.scale).clamp(0.03, 0.8);
                       _textRotation = _pinchBaseRotation + details.rotation;
                     });
                     _rebuildTextPolylines();
@@ -377,12 +370,7 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
                   TextField(
                     controller: _textController,
                     textCapitalization: TextCapitalization.characters,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontFamily: _fontFamily == 'AlibabaBlack'
-                          ? 'AlibabaPuHuiTi'
-                          : _fontFamily,
-                    ),
+                    style: TextStyle(color: Colors.white, fontFamily: _fontFamily == 'AlibabaBlack' ? 'AlibabaPuHuiTi' : _fontFamily),
                     onChanged: (val) {
                       _rebuildTextPolylines();
                     },
@@ -447,8 +435,7 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
                   // Direction
                   Row(
                     children: [
-                      const Text('Direction:',
-                          style: TextStyle(color: Colors.white70)),
+                      const Text('Direction:', style: TextStyle(color: Colors.white70)),
                       const SizedBox(width: 12),
                       ChoiceChip(
                         label: const Text('Horizontal'),
@@ -466,79 +453,6 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
                           setState(() => _isHorizontal = false);
                           _rebuildTextPolylines();
                         },
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  // Font Selection
-                  Row(
-                    children: [
-                      const Text('Font:',
-                          style: TextStyle(color: Colors.white70)),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
-                          value: _fontFamily,
-                          dropdownColor: const Color(0xFF252525),
-                          decoration: InputDecoration(
-                            isDense: true,
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide:
-                                  const BorderSide(color: Colors.white24),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide:
-                                  const BorderSide(color: Color(0xFF4DB6FF)),
-                            ),
-                          ),
-                          items: [
-                            DropdownMenuItem(
-                                value: 'AdobeGothic',
-                                child: Text('Adobe Gothic',
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontFamily: 'AdobeGothic'))),
-                            DropdownMenuItem(
-                                value: 'AlibabaBlack',
-                                child: Text('Alibaba Black',
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontFamily: 'AlibabaPuHuiTi'))),
-                            DropdownMenuItem(
-                                value: 'Stencil',
-                                child: Text('Stencil',
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontFamily: 'Stencil'))),
-                            DropdownMenuItem(
-                                value: 'Oswald',
-                                child: Text('Oswald',
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontFamily: 'Oswald'))),
-                            DropdownMenuItem(
-                                value: 'Righteous',
-                                child: Text('Righteous',
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontFamily: 'Righteous'))),
-                            DropdownMenuItem(
-                                value: 'Cinzel',
-                                child: Text('Cinzel',
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontFamily: 'Cinzel'))),
-                          ],
-                          onChanged: (val) {
-                            if (val == null) return;
-                            setState(() => _fontFamily = val);
-                            _rebuildTextPolylines();
-                          },
-                        ),
                       ),
                     ],
                   ),
@@ -570,8 +484,7 @@ class _ShapeWithTextPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (shapeWidth <= 0 || shapeHeight <= 0) return;
 
-    final scale =
-        min(size.width / shapeWidth, size.height / shapeHeight) * 0.85;
+    final scale = min(size.width / shapeWidth, size.height / shapeHeight) * 0.85;
     final dx = (size.width - shapeWidth * scale) / 2;
     final dy = (size.height - shapeHeight * scale) / 2;
 
@@ -583,8 +496,7 @@ class _ShapeWithTextPainter extends CustomPainter {
 
     for (final pl in shapePolylines) {
       if (pl.length < 2) continue;
-      final path = Path()
-        ..moveTo(pl.first.dx * scale + dx, pl.first.dy * scale + dy);
+      final path = Path()..moveTo(pl.first.dx * scale + dx, pl.first.dy * scale + dy);
       for (int i = 1; i < pl.length; i++) {
         path.lineTo(pl[i].dx * scale + dx, pl[i].dy * scale + dy);
       }
@@ -599,8 +511,7 @@ class _ShapeWithTextPainter extends CustomPainter {
 
     for (final pl in textPolylines) {
       if (pl.length < 2) continue;
-      final path = Path()
-        ..moveTo(pl.first.dx * scale + dx, pl.first.dy * scale + dy);
+      final path = Path()..moveTo(pl.first.dx * scale + dx, pl.first.dy * scale + dy);
       for (int i = 1; i < pl.length; i++) {
         path.lineTo(pl[i].dx * scale + dx, pl[i].dy * scale + dy);
       }

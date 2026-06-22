@@ -1,7 +1,7 @@
-import 'package:flutter_project/core/sjm_cipher.dart';
+import 'package:flutter_project/core/cut_text_overlay_service.dart';
 import 'package:flutter_project/core/text_overlay_fonts.dart';
 import 'package:flutter_project/core/cut_file_transformer.dart';
-import 'package:flutter_project/core/cut_text_overlay_service.dart';
+
 import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
@@ -58,30 +58,36 @@ class SunshineTextOverlayService {
 
     final normalizedSpec = spec.copyWith(text: normalizedText);
 
-    final overlayPolylines = _buildTextPolylines(
+    final overlayPolylinesPreview = _buildTextPolylines(
       baseData: baseData,
       spec: normalizedSpec,
       flipX: flipX,
     );
-    if (overlayPolylines.isEmpty) {
+    if (overlayPolylinesPreview.isEmpty) {
       throw const FormatException('text_overlay_error_empty');
     }
 
+    final overlayPolylinesMachine = _buildTextPolylines(
+      baseData: baseData,
+      spec: normalizedSpec.copyWith(flipHorizontally: !normalizedSpec.flipHorizontally),
+      flipX: flipX,
+    );
+
     final overlayPreviewData = _calculateBounds(
-      overlayPolylines
+      overlayPolylinesPreview
           .expand((polyline) => polyline)
           .toList(growable: false),
-      _overlayDrawFlags(overlayPolylines),
+      _overlayDrawFlags(overlayPolylinesPreview),
     );
     
-    final mergedPreview = _mergePathData(baseData, overlayPolylines);
+    final mergedPreview = _mergePathData(baseData, overlayPolylinesPreview);
 
     final bytes = preparedBytes != null
         ? _appendOverlayToSunshineSjc(
             preparedBytes: preparedBytes,
-            overlayPolylines: overlayPolylines,
+            overlayPolylines: overlayPolylinesMachine,
             maxWidth: maxWidth,
-            spec: normalizedSpec,
+            spec: normalizedSpec.copyWith(flipHorizontally: !normalizedSpec.flipHorizontally),
             swapCoordinates: flipX,
           )
         : <int>[];
