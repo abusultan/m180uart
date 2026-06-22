@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../services/api_service.dart';
-import '../../services/bluetooth_service.dart';
+import 'package:flutter_project/core/serial/serial_service.dart';
 import '../../data/models/product_models.dart';
 import '../../core/app_strings.dart';
 import 'device_detail_screen.dart';
@@ -41,7 +41,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
     _isOpeningProduct = true;
     try {
       final typeMachineName =
-          await CutterBluetoothService().getTypeMachineNameForItems();
+          await CutterSerialService().getTypeMachineNameForItems();
       final items = await ApiService().getProductItems(
         product.id,
         typeMachineName: typeMachineName,
@@ -74,7 +74,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
   @override
   void initState() {
     super.initState();
-    _typeMachineNameSub = CutterBluetoothService().typeMachineNameStream.listen(
+    _typeMachineNameSub = CutterSerialService().typeMachineNameStream.listen(
           _handleTypeMachineNameChanged,
         );
     _loadProducts();
@@ -197,7 +197,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
     try {
       final query = _searchController.text.trim();
       final typeMachineName =
-          await CutterBluetoothService().getTypeMachineNameForItems();
+          await CutterSerialService().getTypeMachineNameForItems();
       _lastLoadedTypeMachineName = typeMachineName;
       final selectedCutSide =
           _supportsCutSideFilter(typeMachineName)

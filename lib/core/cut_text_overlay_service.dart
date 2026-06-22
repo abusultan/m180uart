@@ -1,10 +1,11 @@
-import 'text_overlay_fonts.dart';
+import 'package:flutter_project/core/cut_file_transformer.dart';
+
+import 'package:flutter_project/core/cut_file_transformer.dart';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
 
-import 'cut_file_transformer.dart';
-import 'sunshine_text_overlay.dart';
+import 'package:flutter_project/features/sunshine/services/sunshine_text_overlay.dart';
 
 enum CutTextOverlayDirection { horizontal, vertical }
 

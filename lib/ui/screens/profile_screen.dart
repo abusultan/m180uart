@@ -2,9 +2,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/app_strings.dart';
-import '../../core/machine_handshake.dart';
+import 'package:flutter_project/core/serial/machine_handshake.dart';
 import '../../services/api_service.dart';
-import '../../services/bluetooth_service.dart';
+import 'package:flutter_project/core/serial/serial_service.dart';
 import '../../providers/language_provider.dart';
 import 'login_screen.dart';
 import 'cut_settings_screen.dart';
@@ -87,7 +87,7 @@ class ProfileScreen extends StatelessWidget {
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-              CutterBluetoothService().disconnect();
+              CutterSerialService().disconnect();
               Navigator.of(context).pushAndRemoveUntil(
                 MaterialPageRoute(builder: (context) => const LoginScreen()),
                 (Route<dynamic> route) => false,
@@ -107,7 +107,7 @@ class ProfileScreen extends StatelessWidget {
   }
 
   Future<bool> _performHandshakeSync() async {
-    final cutter = CutterBluetoothService();
+    final cutter = CutterSerialService();
     final serial = (cutter.serialNumber ?? '').trim();
 
     String? preferred = MachineHandshake.normalizeAlgorithm(
@@ -142,7 +142,7 @@ class ProfileScreen extends StatelessWidget {
   }
 
   Future<void> _sendTestFile(BuildContext context) async {
-    final cutter = CutterBluetoothService();
+    final cutter = CutterSerialService();
     if (!cutter.isConnected) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(

@@ -6,7 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../services/cut_settings_service.dart';
-import '../../services/bluetooth_service.dart';
+import 'package:flutter_project/core/serial/serial_service.dart';
 import '../../services/app_settings_service.dart';
 import '../../core/app_strings.dart';
 import '../../core/handshake_response_resolver.dart';
@@ -75,7 +75,7 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
   static const String _updateApkUrl = 'https://anti-crash.com/updateuart.apk';
 
   final CutSettingsService _settings = CutSettingsService();
-  final CutterBluetoothService _bluetooth = CutterBluetoothService();
+  final CutterSerialService _bluetooth = CutterSerialService();
   final AppSettingsService _appSettings = AppSettingsService();
   final Dio _dio = Dio(
     BaseOptions(

@@ -1,3 +1,8 @@
+import 'package:flutter_project/core/cut_text_overlay_service.dart';
+import 'package:flutter_project/ui/widgets/text_overlay_interactive_viewer.dart';
+
+import 'package:flutter_project/core/cut_text_overlay_service.dart';
+import 'package:flutter_project/ui/widgets/text_overlay_interactive_viewer.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
@@ -6,21 +11,19 @@ import 'package:flutter/material.dart';
 
 import '../../core/app_strings.dart';
 import '../../core/cut_file_transformer.dart';
-import '../../core/machine_handshake.dart';
+import 'package:flutter_project/core/serial/machine_handshake.dart';
 import '../../data/models/product_models.dart';
 import '../../services/api_service.dart';
-import '../../services/bluetooth_service.dart';
+import 'package:flutter_project/core/serial/serial_service.dart';
 import '../../services/cut_settings_service.dart';
 import 'cut_settings_screen.dart' as cut_settings_ui;
 import 'scan_screen.dart';
 import '../widgets/svg_renderer_widget.dart';
-import '../../core/cut_text_overlay_service.dart';
-import '../widgets/text_overlay_interactive_viewer.dart';
-import 'cut_text_overlay_sheet.dart';
-import '../../core/dq_custom_cut.dart';
-import '../../core/dq_cut_service.dart';
-import 'dq_custom_cut_screen.dart';
-import 'dq_text_on_cut_screen.dart';
+import 'package:flutter_project/features/sunshine/screens/sunshine_text_overlay_screen.dart';
+import 'package:flutter_project/features/dq/services/dq_custom_cut.dart';
+import 'package:flutter_project/features/dq/services/dq_cut_service.dart';
+import 'package:flutter_project/features/dq/screens/dq_custom_cut_screen.dart';
+import 'package:flutter_project/features/dq/screens/dq_text_on_cut_screen.dart';
 import '../../core/sjm_cipher.dart';
 
 class DeviceDetailScreen extends StatefulWidget {
@@ -33,7 +36,7 @@ class DeviceDetailScreen extends StatefulWidget {
 }
 
 class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
-  final CutterBluetoothService _bluetooth = CutterBluetoothService();
+  final CutterSerialService _bluetooth = CutterSerialService();
   late final DqCutService _dqCutService = DqCutService(_bluetooth);
   final CutSettingsService _cutSettings = CutSettingsService();
 
@@ -226,7 +229,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       return;
     }
 
-    final result = await showCutTextOverlaySheet(
+    final result = await showSunshineTextOverlayScreen(
       context,
       initialSpec: _catalogTextOverlay,
     );
@@ -750,7 +753,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       // Sunshine app's sendNoBackLimit which writes all bytes at once
       await _bluetooth.writeBytes(
         bytesToSend,
-        packetDelayMs: 400,
+        packetDelayMs: 10,
         chunkSize: 2048,
       );
 

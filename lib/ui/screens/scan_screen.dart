@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../../services/bluetooth_service.dart';
-import '../../core/machine_handshake.dart';
+import 'package:flutter_project/core/serial/serial_service.dart';
+import 'package:flutter_project/core/serial/machine_handshake.dart';
 import '../../core/app_strings.dart';
 
 class ScanScreen extends StatefulWidget {
@@ -108,7 +108,7 @@ class _ScanScreenState extends State<ScanScreen> {
     _showLoadingDialog(AppStrings.of(context, 'connecting'));
 
     try {
-      await CutterBluetoothService().connect();
+      await CutterSerialService().connect();
       if (!mounted) return;
 
       Navigator.pop(context);
@@ -117,7 +117,7 @@ class _ScanScreenState extends State<ScanScreen> {
       final connectAlgorithm = await _readAlgorithmForConnect();
       final Completer<bool> handshakeCompleter = Completer<bool>();
       final handshake = MachineHandshake(
-        CutterBluetoothService(),
+        CutterSerialService(),
         onStatusUpdate: (status) {
           debugPrint("Handshake Status: $status");
         },
@@ -142,7 +142,7 @@ class _ScanScreenState extends State<ScanScreen> {
       Navigator.pop(context);
 
       if (success) {
-        final bluetooth = CutterBluetoothService();
+        final bluetooth = CutterSerialService();
         final selectedAlgorithm = connectAlgorithm;
         final serial = bluetooth.serialNumber;
         bool shouldAskToPin = true;
@@ -183,7 +183,7 @@ class _ScanScreenState extends State<ScanScreen> {
             ),
           );
         }
-        await CutterBluetoothService().disconnect();
+        await CutterSerialService().disconnect();
       }
     } catch (e) {
       if (mounted) Navigator.pop(context);
@@ -205,7 +205,7 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Future<void> _disconnectSerial() async {
-    await CutterBluetoothService().disconnect();
+    await CutterSerialService().disconnect();
     if (mounted) {
       setState(() {});
     }
@@ -235,7 +235,7 @@ class _ScanScreenState extends State<ScanScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isConnected = CutterBluetoothService().isConnected;
+    final isConnected = CutterSerialService().isConnected;
 
     return Scaffold(
       appBar: AppBar(

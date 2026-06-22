@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import '../../core/app_strings.dart';
-import '../../core/machine_handshake.dart';
-import '../../services/bluetooth_service.dart';
+import 'package:flutter_project/core/serial/machine_handshake.dart';
+import 'package:flutter_project/core/serial/serial_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dashboard_screen.dart';
+import 'package:flutter_project/features/dashboard/screens/dashboard_screen.dart';
 import 'profile_screen.dart';
 
 class _FirstSerialSetupChoice {
@@ -54,10 +54,10 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
-    _serialSub = CutterBluetoothService().serialStream.listen((_) {
+    _serialSub = CutterSerialService().serialStream.listen((_) {
       if (!mounted) return;
       setState(() {});
-      if (CutterBluetoothService().isConnected) {
+      if (CutterSerialService().isConnected) {
         _autoConnectRetryTimer?.cancel();
       }
     });
@@ -70,7 +70,7 @@ class _MainScreenState extends State<MainScreen> {
       if (!mounted) return;
       final connected = await _tryAutoConnect();
       if (!mounted) return;
-      if (!connected && !CutterBluetoothService().isConnected) {
+      if (!connected && !CutterSerialService().isConnected) {
         _scheduleAutoConnect();
       }
     });
@@ -151,7 +151,7 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<String?> _waitForDetectedSerial(
-    CutterBluetoothService cutter, {
+    CutterSerialService cutter, {
     Duration timeout = const Duration(seconds: 2),
   }) async {
     final existing = (cutter.serialNumber ?? '').trim();
@@ -442,7 +442,7 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<bool> _runCachedFastPath(
-    CutterBluetoothService cutter,
+    CutterSerialService cutter,
     SharedPreferences prefs, {
     required String openedPort,
     required _CachedAutoConnectRoute route,
@@ -479,7 +479,7 @@ class _MainScreenState extends State<MainScreen> {
     return true;
   }
 
-  Future<bool> _probeMachineResponse(CutterBluetoothService cutter) async {
+  Future<bool> _probeMachineResponse(CutterSerialService cutter) async {
     final completer = Completer<bool>();
     late StreamSubscription<String> sub;
     Timer? timeout;
@@ -522,7 +522,7 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<bool> _runHandshakeAttempt(
-    CutterBluetoothService cutter, {
+    CutterSerialService cutter, {
     String? forcedAlgorithm,
     String? preferredAlgorithm,
     required int maxRounds,
@@ -572,9 +572,9 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<bool> _tryAutoConnect() async {
-    if (_autoConnectInProgress) return CutterBluetoothService().isConnected;
+    if (_autoConnectInProgress) return CutterSerialService().isConnected;
 
-    final cutter = CutterBluetoothService();
+    final cutter = CutterSerialService();
     if (cutter.isConnected) return true;
 
     _autoConnectInProgress = true;

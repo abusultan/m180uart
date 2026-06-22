@@ -23,7 +23,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
   static const List<String> _machineTypes = [
-    'sunshine',
+    'Sunshine',
     'crust',
     'rockspace',
     'mechanic',

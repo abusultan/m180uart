@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/app_strings.dart';
-import '../../services/bluetooth_service.dart';
+import 'package:flutter_project/core/serial/serial_service.dart';
 
 class SystemInformationScreen extends StatefulWidget {
   const SystemInformationScreen({super.key});
@@ -10,7 +10,7 @@ class SystemInformationScreen extends StatefulWidget {
 }
 
 class _SystemInformationScreenState extends State<SystemInformationScreen> {
-  final CutterBluetoothService _bluetooth = CutterBluetoothService();
+  final CutterSerialService _bluetooth = CutterSerialService();
 
   bool _loading = true;
   String _typeName = '-';

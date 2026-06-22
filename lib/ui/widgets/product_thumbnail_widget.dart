@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../services/api_service.dart';
-import '../../services/bluetooth_service.dart';
+import 'package:flutter_project/core/serial/serial_service.dart';
 import 'svg_renderer_widget.dart';
 
 class ProductThumbnail extends StatelessWidget {
@@ -23,7 +23,7 @@ class ProductThumbnail extends StatelessWidget {
 
   Future<_ResolvedProductThumbnail> _resolvePreview() async {
     final api = ApiService();
-    final bluetooth = CutterBluetoothService();
+    final bluetooth = CutterSerialService();
     final primary = api.normalizeUrl(primaryImageUrl);
     final fallback = api.normalizeUrl(fallbackImageUrl);
     final defaultUrl = primary.isNotEmpty ? primary : fallback;
@@ -70,7 +70,7 @@ class ProductThumbnail extends StatelessWidget {
   }
 
   Future<_ResolvedProductThumbnail> _cachedFuture() {
-    final bluetooth = CutterBluetoothService();
+    final bluetooth = CutterSerialService();
     final key =
         '${bluetooth.serialNumber}|${bluetooth.cachedAgentType}|$productId|$primaryImageUrl|$fallbackImageUrl';
     return _cache.putIfAbsent(key, _resolvePreview);

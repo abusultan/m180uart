@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import '../../core/handshake_response_resolver.dart';
-import '../../services/bluetooth_service.dart';
+import 'package:flutter_project/core/serial/serial_service.dart';
 
 class HandshakeTesterScreen extends StatefulWidget {
   final String deviceId;
@@ -18,7 +18,7 @@ class HandshakeTesterScreen extends StatefulWidget {
 }
 
 class _HandshakeTesterScreenState extends State<HandshakeTesterScreen> {
-  final _bluetooth = CutterBluetoothService();
+  final _bluetooth = CutterSerialService();
 
   String? _serialNumber;
   int? _currentChallenge;

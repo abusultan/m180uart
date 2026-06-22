@@ -19,7 +19,7 @@ class CutSettingsService {
 
   static const String scopeGeneric = 'generic';
   static const String scopeDq = 'dq';
-  static const String scopeSunshine = 'sunshine';
+  static const String scopeSunshine = 'Sunshine';
 
   static const int defaultSpeed = 1;
   static const int defaultPressure = 3;
@@ -65,7 +65,7 @@ class CutSettingsService {
     final normalizedSerial = (serialNumber ?? '').trim().toUpperCase();
     final normalizedAgent = normalizeAgentType(agentType);
 
-    if (normalizedType == scopeSunshine) {
+    if (normalizedType == scopeSunshine.toLowerCase()) {
       return scopeSunshine;
     }
 

@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_project/core/machine_protocol.dart';
+import 'package:flutter_project/core/serial/machine_protocol.dart';
 import 'package:flutter_project/services/cut_settings_service.dart';
 
 void main() {
