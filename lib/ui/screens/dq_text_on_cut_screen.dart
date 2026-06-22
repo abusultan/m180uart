@@ -163,26 +163,27 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
     for (final char in text.split('')) {
       final charGlyphs = glyphs[char];
       if (charGlyphs == null) {
-        if (_isHorizontal)
-          cursorX += glyphW + gap;
-        else
-          cursorY += glyphH + gap;
+        if (_isHorizontal) cursorX += glyphW + gap;
+        else cursorY += glyphH + gap;
         continue;
       }
       for (final stroke in charGlyphs) {
         final polyline = stroke.map((p) {
+          double px = p.dx * profile.widthScale;
+          double pdy = p.dy;
+          if (profile.invertY) pdy = profile.baselineHeight - pdy;
+          double py = (pdy / profile.baselineHeight) * (profile.heightScale * 1.6);
+          
           if (_isHorizontal) {
-            return Offset(p.dx + cursorX, p.dy);
+            return Offset(px + cursorX, py);
           } else {
-            return Offset(p.dx, p.dy + cursorY);
+            return Offset(px, py + cursorY);
           }
         }).toList();
         if (polyline.length >= 2) rawPolylines.add(polyline);
       }
-      if (_isHorizontal)
-        cursorX += glyphW + gap;
-      else
-        cursorY += glyphH + gap;
+      if (_isHorizontal) cursorX += glyphW + gap;
+      else cursorY += glyphH + gap;
     }
 
     if (rawPolylines.isEmpty) {

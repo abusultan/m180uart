@@ -770,13 +770,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  "${AppStrings.of(context, 'remaining')}: $remainingPieces",
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF00FF88),
-                    fontWeight: FontWeight.bold,
-                  ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      "${AppStrings.of(context, 'remaining')}: $remainingPieces",
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF00FF88),
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    GestureDetector(
+                      onTap: () async {
+                        await ApiService().getUserInfo();
+                        if (mounted) setState(() {});
+                      },
+                      child: const Icon(Icons.refresh, size: 16, color: Color(0xFF00FF88)),
+                    ),
+                  ],
                 ),
               ],
             ),
