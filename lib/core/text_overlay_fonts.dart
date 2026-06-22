@@ -432,18 +432,25 @@ class TextOverlayFonts {
       widthScale: 1.1,
       heightScale: 1.0,
       gapScale: 1.0,
-      invertY: true,
-      baselineHeight: 1.0,
     ),
     'Oswald': CutTextFontProfile(
       glyphs: _oswaldGlyphs,
       widthScale: 1.0,
       heightScale: 1.0,
       gapScale: 1.0,
-      invertY: true,
-      baselineHeight: 1.0,
     ),
-
+    'Righteous': CutTextFontProfile(
+      glyphs: _righteousGlyphs,
+      widthScale: 1.05,
+      heightScale: 1.0,
+      gapScale: 1.0,
+    ),
+    'Cinzel': CutTextFontProfile(
+      glyphs: _cinzelGlyphs,
+      widthScale: 1.05,
+      heightScale: 1.0,
+      gapScale: 1.0,
+    ),
   };
 
   static String normalizeText(String raw, {String fontFamily = 'AdobeGothic'}) {
