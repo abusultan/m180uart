@@ -35,8 +35,6 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
   final _textController = TextEditingController();
   // Font state
   String _fontFamily = 'AdobeGothic';
-  String _fontFamily = 'AdobeGothic';
-
   // Decoded cut shape
   List<List<Offset>> _shapePolylines = [];
   double _shapeWidth = 0;

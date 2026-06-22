@@ -2,6 +2,7 @@ import sys
 import json
 from fontTools.ttLib import TTFont
 from fontTools.pens.basePen import BasePen
+from fontTools.pens.transformPen import TransformPen
 
 class PolylinePen(BasePen):
     def __init__(self, glyphSet, scale_x, scale_y, flip_y=False):
@@ -12,6 +13,7 @@ class PolylinePen(BasePen):
         self.polylines = []
         self.current_polyline = []
         self.current_pt = None
+        self.glyfTable = glyphSet
 
     def _moveTo(self, pt):
         if self.current_polyline:
@@ -24,8 +26,6 @@ class PolylinePen(BasePen):
         self.current_pt = pt
 
     def _curveToOne(self, pt1, pt2, pt3):
-        # Flatten bezier curve by simple interpolation
-        # Since this is for simple polylines, 10 steps are enough
         pts = self._flatten_cubic(self.current_pt, pt1, pt2, pt3, 10)
         self.current_polyline.extend([self._transform(p) for p in pts[1:]])
         self.current_pt = pt3
@@ -34,6 +34,14 @@ class PolylinePen(BasePen):
         pts = self._flatten_quadratic(self.current_pt, pt1, pt2, 10)
         self.current_polyline.extend([self._transform(p) for p in pts[1:]])
         self.current_pt = pt2
+
+    def addComponent(self, glyphName, transformation, **kwargs):
+        try:
+            glyph = self.glyphSet[glyphName]
+        except KeyError:
+            return
+        tPen = TransformPen(self, transformation)
+        glyph.draw(tPen, self.glyfTable)
 
     def _closePath(self):
         if self.current_polyline:
@@ -52,7 +60,7 @@ class PolylinePen(BasePen):
     def _transform(self, pt):
         y = pt[1] * self.scale_y
         if self.flip_y:
-            y = 1.6 - y # wait, if Y=0 is bottom and Y=1.6 is top, we do 1.6 - y to invert!
+            y = 1.6 - y
         return (pt[0] * self.scale_x, y)
         
     def _flatten_cubic(self, p0, p1, p2, p3, steps):

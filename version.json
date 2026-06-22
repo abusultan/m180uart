@@ -1,6 +1,6 @@
 {
-  "versionCode": 55,
+  "versionCode": 56,
   "versionName": "1.0.51",
   "url": "https://anti-crash.com/updateuart.apk",
-  "releaseNotes": "Add font selection to dq text on cut screen"
+  "releaseNotes": "Fix missing font glyphs for Oswald and Cinzel, and fix Stencil/Righteous being upside down"
 }
