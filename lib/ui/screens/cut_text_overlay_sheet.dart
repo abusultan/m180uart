@@ -174,18 +174,7 @@ class _CutTextOverlaySheetState extends State<_CutTextOverlaySheet> {
                         style: const TextStyle(
                             color: Colors.white, fontFamily: 'Oswald')),
                   ),
-                  DropdownMenuItem(
-                    value: 'Righteous',
-                    child: Text('Righteous',
-                        style: const TextStyle(
-                            color: Colors.white, fontFamily: 'Righteous')),
-                  ),
-                  DropdownMenuItem(
-                    value: 'Cinzel',
-                    child: Text('Cinzel',
-                        style: const TextStyle(
-                            color: Colors.white, fontFamily: 'Cinzel')),
-                  ),
+
                 ],
                 onChanged: (value) {
                   if (value == null) return;

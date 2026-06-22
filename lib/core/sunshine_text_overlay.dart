@@ -157,7 +157,9 @@ class SunshineTextOverlayService {
       polylines.add([
         for (final point in glyph)
           () {
-            final normalizedY = point.dy / 1.6;
+            double py = point.dy;
+            if (fontProfile.invertY) py = fontProfile.baselineHeight - py;
+            final normalizedY = py / fontProfile.baselineHeight;
             final shearedX =
                 point.dx + ((1 - normalizedY) * fontProfile.shearX);
             return Offset(

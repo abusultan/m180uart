@@ -8,6 +8,8 @@ class CutTextFontProfile {
     this.heightScale = 1,
     this.gapScale = 1,
     this.shearX = 0,
+    this.invertY = false,
+    this.baselineHeight = 1.6,
   });
 
   final Map<String, List<List<Offset>>> glyphs;
@@ -15,6 +17,8 @@ class CutTextFontProfile {
   final double heightScale;
   final double gapScale;
   final double shearX;
+  final bool invertY;
+  final double baselineHeight;
 }
 
 class TextOverlayFonts {
@@ -428,25 +432,18 @@ class TextOverlayFonts {
       widthScale: 1.1,
       heightScale: 1.0,
       gapScale: 1.0,
+      invertY: true,
+      baselineHeight: 1.0,
     ),
     'Oswald': CutTextFontProfile(
       glyphs: _oswaldGlyphs,
       widthScale: 1.0,
       heightScale: 1.0,
       gapScale: 1.0,
+      invertY: true,
+      baselineHeight: 1.0,
     ),
-    'Righteous': CutTextFontProfile(
-      glyphs: _righteousGlyphs,
-      widthScale: 1.05,
-      heightScale: 1.0,
-      gapScale: 1.0,
-    ),
-    'Cinzel': CutTextFontProfile(
-      glyphs: _cinzelGlyphs,
-      widthScale: 1.05,
-      heightScale: 1.0,
-      gapScale: 1.0,
-    ),
+
   };
 
   static String normalizeText(String raw, {String fontFamily = 'AdobeGothic'}) {

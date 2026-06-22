@@ -35,6 +35,7 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
   final _textController = TextEditingController();
   // Font state
   String _fontFamily = 'AdobeGothic';
+  String _fontFamily = 'AdobeGothic';
 
   // Decoded cut shape
   List<List<Offset>> _shapePolylines = [];
@@ -70,7 +71,7 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
     super.dispose();
   }
 
-  // Font state - not needed, using built-in glyphs
+  // Font state
 
   void _decodeShape() {
     final text = latin1.decode(widget.cutFileBytes).trim();
@@ -402,6 +403,36 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
                         borderSide: const BorderSide(color: Color(0xFF4DB6FF)),
                       ),
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: _fontFamily,
+                    dropdownColor: const Color(0xFF1E1E1E),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: 'Font',
+                      labelStyle: const TextStyle(color: Colors.white70),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Colors.white24),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xFF4DB6FF)),
+                      ),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'AdobeGothic', child: Text('Adobe Gothic', style: TextStyle(fontFamily: 'AdobeGothic'))),
+                      DropdownMenuItem(value: 'AlibabaBlack', child: Text('Alibaba Black', style: TextStyle(fontFamily: 'AlibabaPuHuiTi'))),
+                      DropdownMenuItem(value: 'Stencil', child: Text('Stencil', style: TextStyle(fontFamily: 'Stencil'))),
+                      DropdownMenuItem(value: 'Oswald', child: Text('Oswald', style: TextStyle(fontFamily: 'Oswald'))),
+                    ],
+                    onChanged: (val) {
+                      if (val != null) {
+                        setState(() => _fontFamily = val);
+                        _rebuildTextPolylines();
+                      }
+                    },
                   ),
                   const SizedBox(height: 12),
                   // Pinch to resize hint
