@@ -149,8 +149,9 @@ class _DqTextOnCutScreenState extends State<DqTextOnCutScreen> {
     }
 
     // Use TextOverlayFonts glyphs
-    final glyphs = TextOverlayFonts.registry[_fontFamily]?.glyphs ??
-        TextOverlayFonts.registry['AdobeGothic']!.glyphs;
+    final profile = TextOverlayFonts.registry[_fontFamily] ??
+        TextOverlayFonts.registry['AdobeGothic']!;
+    final glyphs = profile.glyphs;
 
     // Build polylines for each character
     final rawPolylines = <List<Offset>>[];

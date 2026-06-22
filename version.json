@@ -1,6 +1,6 @@
 {
-  "versionCode": 56,
+  "versionCode": 57,
   "versionName": "1.0.51",
   "url": "https://anti-crash.com/updateuart.apk",
-  "releaseNotes": "Fix missing font glyphs for Oswald and Cinzel, and fix Stencil/Righteous being upside down"
+  "releaseNotes": "Add refresh button for remaining cuts"
 }
