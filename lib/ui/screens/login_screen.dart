@@ -5,8 +5,6 @@ import '../../services/app_settings_service.dart';
 import '../../core/app_strings.dart';
 import 'register_screen.dart';
 import 'main_screen.dart';
-import 'rep_main_screen.dart';
-import 'wifi_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -42,15 +40,7 @@ class _LoginScreenState extends State<LoginScreen> {
         _loginController.text = savedLogin;
         _passwordController.text = savedPass;
       });
-      // Optional: Auto-login
-      // _login();
     }
-  }
-
-  Future<void> _openWifiSettings() async {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const WifiScreen()),
-    );
   }
 
   Future<void> _login() async {
@@ -68,13 +58,11 @@ class _LoginScreenState extends State<LoginScreen> {
         await prefs.setString('login_user', user.isEmpty ? 'debug' : user);
         await prefs.setString('login_pass', pass);
         ApiService().setToken('debug');
-        final isRepMode = prefs.getBool('mock_rep_mode') ?? false;
 
         if (!mounted) return;
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(
-            builder: (context) =>
-                isRepMode ? const RepMainScreen() : const MainScreen(),
+            builder: (context) => const MainScreen(),
           ),
           (Route<dynamic> route) => false,
         );
@@ -88,13 +76,11 @@ class _LoginScreenState extends State<LoginScreen> {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('login_user', user);
         await prefs.setString('login_pass', pass);
-        final isRepMode = prefs.getBool('mock_rep_mode') ?? false;
 
         if (!mounted) return;
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(
-            builder: (context) =>
-                isRepMode ? const RepMainScreen() : const MainScreen(),
+            builder: (context) => const MainScreen(),
           ),
           (Route<dynamic> route) => false,
         );
@@ -119,31 +105,13 @@ class _LoginScreenState extends State<LoginScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              GestureDetector(
-                onLongPress: () async {
-                  final prefs = await SharedPreferences.getInstance();
-                  final current = prefs.getBool('mock_rep_mode') ?? false;
-                  await prefs.setBool('mock_rep_mode', !current);
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        !current
-                            ? 'تم تفعيل وضع المندوب (موكاب)'
-                            : 'تم إلغاء وضع المندوب (موكاب)',
-                      ),
-                      backgroundColor: const Color(0xFF00FF88),
-                    ),
-                  );
-                },
-                child: Text(
-                  AppStrings.of(context, 'app_name'),
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 32,
-                    fontWeight: FontWeight.bold,
-                  ),
+              Text(
+                AppStrings.of(context, 'app_name'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
               const SizedBox(height: 48),
@@ -216,15 +184,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              TextButton.icon(
-                onPressed: _openWifiSettings,
-                icon: const Icon(Icons.wifi, color: Color(0xFF00FF88)),
-                label: const Text(
-                  'إعدادات الواي فاي',
-                  style: TextStyle(color: Color(0xFF00FF88)),
-                ),
-              ),
-              const SizedBox(height: 8),
               TextButton(
                 onPressed: () {
                   Navigator.push(

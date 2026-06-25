@@ -1,7 +1,6 @@
 import 'package:flutter_project/services/api_service.dart';
 
 import 'package:flutter_project/services/api_service.dart';
-import 'package:flutter_project/core/handshake_response_resolver.dart';
 import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -419,43 +418,9 @@ class CutterSerialService {
   }
 
   Future<String> getTypeMachineNameForItems() async {
-    final hasResolvedMachineContext =
-        (_serialNumber?.trim().isNotEmpty ?? false) ||
-        (_successfulAgentType?.trim().isNotEmpty ?? false) ||
-        _serialFromPidFallback;
-
-    if (!hasResolvedMachineContext) {
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        return prefs.getString(_lastTypeMachineNameKey) ?? 'DQ';
-      } catch (_) {
-        return 'DQ';
-      }
-    }
-
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final persisted = prefs.getString(_lastTypeMachineNameKey);
-      if (!_hasStrongTypeMachineSignal(
-        serial: _serialNumber,
-        agentType: _successfulAgentType,
-      )) {
-        return persisted ?? 'DQ';
-      }
-
-      final resolved = _resolveTypeMachineName(
-        serial: _serialNumber,
-        agentType: _successfulAgentType,
-      );
-      if (resolved.isNotEmpty) {
-        await _persistTypeMachineName(resolved);
-        return resolved;
-      }
-      return persisted ?? 'DQ';
-    } catch (_) {
-      return 'DQ';
-    }
+    return 'm180t';
   }
+
 
   void setBypassMode(bool value, {String? agentType, String? simulatedSerial}) {
     _isBypassMode = value;
@@ -541,7 +506,7 @@ class CutterSerialService {
     final normalizedAlgorithm = _normalizeHandshakeAlgorithm(
       handshakeAlgorithm,
     );
-    if (normalizedAlgorithm == HandshakeResponseResolver.algoMechanicUart) {
+    if (normalizedAlgorithm == 'MECHANIC_UART') {
       return 'Mechanic UART';
     }
 
@@ -758,7 +723,7 @@ class CutterSerialService {
 
   bool get isConnected => _isConnected;
 
-  Future<void> connect({String? portPath, int baud = 115200}) async {
+  Future<void> connect({String? portPath, int baud = 38400}) async {
     _ensureEventStream();
 
     if (_isConnected) {
@@ -793,7 +758,7 @@ class CutterSerialService {
         candidates.add(rememberedPort);
       }
 
-      candidates.addAll(['/dev/ttyS0', '/dev/ttyS1']);
+      candidates.addAll(['/dev/ttyS1', '/dev/ttyHS2', '/dev/ttyS3', '/dev/ttyS0']);
 
       final preferExtended =
           savedPort == '/dev/ttyS2' ||
@@ -1133,13 +1098,12 @@ class CutterSerialService {
       } else if (_successfulAgentType != null && _successfulAgentType!.isNotEmpty) {
         algoToTry = _successfulAgentType!;
       } else {
-        final sequence = HandshakeResponseResolver.supportedAlgorithms;
-        algoToTry = sequence[_handshakeAttemptIndex % sequence.length];
+        algoToTry = '180t_mietubl';
       }
 
-      final response = HandshakeResponseResolver.resolveChallengeResponse(algorithm: algoToTry, challenge: challenge);
+      // For M180T, auto-handshake is handled by MietublHandshake, skip text-based challenge
       _lastAttemptedAlgo = algoToTry;
-      await write("BD:12,$response;");
+      await write("BD:12,0;");
     } catch (_) {}
   }
 
@@ -1217,13 +1181,11 @@ class CutterSerialService {
   void setMachinePressure(int pressureForce) => unawaited(sendMachinePressure(pressureForce));
 
   void toggleInduction(bool isOn) {
-    final protocol = _activeMachineProtocol('toggle induction');
-    if (protocol != null) unawaited(_sendProtocolCommands(protocol.inductionCommands(isOn)));
+    // Not applicable for M180T
   }
 
   void setMachineLEDBrightness(int level) {
-    final protocol = _activeMachineProtocol('set LED');
-    if (protocol != null) unawaited(_sendProtocolCommands(protocol.ledCommands(level)));
+    // Not applicable for M180T
   }
 
   void sendTestCut() {

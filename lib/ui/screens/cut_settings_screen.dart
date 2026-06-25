@@ -4,13 +4,12 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../services/cut_settings_service.dart';
 import 'package:flutter_project/core/serial/serial_service.dart';
 import '../../services/app_settings_service.dart';
 import '../../core/app_strings.dart';
-import '../../core/handshake_response_resolver.dart';
-import 'system_information_screen.dart';
 
 Future<double?> showAngleDialog(
   BuildContext context,
@@ -71,8 +70,8 @@ class CutSettingsScreen extends StatefulWidget {
 }
 
 class _CutSettingsScreenState extends State<CutSettingsScreen> {
-  static const String _updateManifestUrl = 'https://anti-crash.com/version.json';
-  static const String _updateApkUrl = 'https://anti-crash.com/updateuart.apk';
+  static const String _updateManifestUrl = 'https://anti-crash.com/m180t_version.json';
+  static const String _updateApkUrl = 'https://anti-crash.com/m180update.apk';
 
   final CutSettingsService _settings = CutSettingsService();
   final CutterSerialService _bluetooth = CutterSerialService();
@@ -178,6 +177,8 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
   }
 
   Future<void> _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedAlgo = prefs.getString('manual_handshake_algorithm_ui');
     final settingsScope = await _resolveSettingsScope();
     final speed = await _settings.getSpeed(scope: settingsScope);
     final pressure = await _settings.getPressure(scope: settingsScope);
@@ -202,8 +203,7 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
       _forceLandscape = forceLandscape;
       _installedVersionCode = installedVersionCode;
       _installedVersionName = installedVersionName;
-      _handshakeAlgo = _bluetooth.cachedAgentType ??
-          HandshakeResponseResolver.algoPassWord2;
+      _handshakeAlgo = savedAlgo ?? _bluetooth.cachedAgentType ?? '180t_mietubl';
       _speedMax = CutSettingsService.maxSpeedForScope(settingsScope);
       _pressureMax = CutSettingsService.maxPressureForScope(settingsScope);
       _loading = false;
@@ -360,7 +360,7 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
 
   Future<String> _downloadUpdateApk() async {
     final directory = await getTemporaryDirectory();
-    final file = File('${directory.path}/updateuart.apk');
+    final file = File('${directory.path}/m180update.apk');
     if (await file.exists()) {
       await file.delete();
     }
@@ -501,6 +501,42 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
     await _bluetooth.cacheSuccessfulHandshake(value, false, mode: 'manual');
   }
 
+  Future<void> _pinHandshakeAlgo() async {
+    if (_handshakeAlgo == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('manual_handshake_algorithm_ui', _handshakeAlgo!);
+    
+    if (_bluetooth.isConnected && _bluetooth.serialNumber != null) {
+      await _bluetooth.cacheSuccessfulHandshake(_handshakeAlgo!, true, mode: 'manual', persist: true);
+    }
+    
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('تم تثبيت الهاند شيك كافتراضي بنجاح!'),
+        backgroundColor: Color(0xFF00FF88),
+      ),
+    );
+  }
+
+  Future<void> _unpinHandshakeAlgo() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('manual_handshake_algorithm_ui');
+    
+    if (_bluetooth.isConnected && _bluetooth.serialNumber != null) {
+      await prefs.remove('handshake_algo_${_bluetooth.serialNumber!}');
+      await prefs.remove('handshake_mode_${_bluetooth.serialNumber!}');
+    }
+    
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('تم إلغاء التثبيت! الماكينة الآن في الوضع التلقائي.'),
+        backgroundColor: Colors.blueAccent,
+      ),
+    );
+  }
+
   Future<void> _runFilmCutterTest() async {
     if (!_bluetooth.isConnected) {
       if (!mounted) return;
@@ -632,10 +668,9 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
                   const SizedBox(height: 20),
                   OutlinedButton.icon(
                     onPressed: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => const SystemInformationScreen(),
-                        ),
+                      // System information not available for M180T
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('M180T - System info via serial')),
                       );
                     },
                     style: OutlinedButton.styleFrom(
@@ -841,10 +876,7 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
-                    value: HandshakeResponseResolver.supportedAlgorithms
-                            .contains(_handshakeAlgo)
-                        ? _handshakeAlgo
-                        : HandshakeResponseResolver.algoPassWord2,
+                    value: '180t_mietubl',
                     dropdownColor: const Color(0xFF1E1E1E),
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
@@ -859,13 +891,45 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
                         vertical: 12,
                       ),
                     ),
-                    items: HandshakeResponseResolver.supportedAlgorithms
+                    items: const ['180t_mietubl']
                         .map((algo) => DropdownMenuItem(
                               value: algo,
                               child: Text(algo),
                             ))
                         .toList(),
                     onChanged: _saveHandshakeAlgo,
+                  ),
+                  const SizedBox(height: 10),
+                  ElevatedButton(
+                    onPressed: _pinHandshakeAlgo,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF00FF88),
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'تثبيت كافتراضي (Pin as Default)',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  ElevatedButton(
+                    onPressed: _unpinHandshakeAlgo,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.redAccent,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'إلغاء التثبيت للعودة للتلقائي (Return to Auto)',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
                   ),
                   const SizedBox(height: 10),
                   const Text(

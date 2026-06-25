@@ -1,6 +1,6 @@
 {
-  "versionCode": 58,
-  "versionName": "1.0.52",
+  "versionCode": 61,
+  "versionName": "1.0.55",
   "url": "https://anti-crash.com/updateuart.apk",
   "releaseNotes": "Major architectural refactoring & Serial connection speed optimization"
 }

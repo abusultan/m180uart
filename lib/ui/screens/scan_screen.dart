@@ -1,8 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_project/core/serial/serial_service.dart';
-import 'package:flutter_project/core/serial/machine_handshake.dart';
+import 'package:flutter_project/core/serial/mietubl_handshake.dart';
 import '../../core/app_strings.dart';
 
 class ScanScreen extends StatefulWidget {
@@ -14,89 +13,19 @@ class ScanScreen extends StatefulWidget {
 
 class _ScanScreenState extends State<ScanScreen> {
   bool _isConnecting = false;
-  String _manualAlgorithm = MachineHandshake.algoSunshine;
-  static const String _algoPrefKey = 'manual_handshake_algorithm_ui';
+  final List<String> _logs = [];
 
-  final List<Map<String, String>> _handshakeAlgorithms = const [
-    {"label": "Sunshine UART (Try 3 methods)", "value": "SUNSHINE"},
-    {"label": "PassWord2 (Primary)", "value": "HANDSHAKE_NEW"},
-    {"label": "OldPassWord", "value": "OLD_V1"},
-    {"label": "PassWord", "value": "OLD_V3"},
-    {"label": "DQ Handshake", "value": "DQ_HANDSHAKE"},
-    {"label": "Mechanic UART", "value": "MECHANIC_UART"},
-  ];
+  void _log(String msg) {
+    debugPrint('ScanScreen: $msg');
+    setState(() {
+      _logs.add('[${DateTime.now().toString().substring(11, 19)}] $msg');
+      if (_logs.length > 50) _logs.removeAt(0);
+    });
+  }
 
   @override
   void initState() {
     super.initState();
-    _loadSavedAlgorithm();
-  }
-
-  Future<void> _loadSavedAlgorithm() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final saved = prefs.getString(_algoPrefKey);
-      if (saved == null ||
-          !_handshakeAlgorithms.any((a) => a['value'] == saved)) {
-        return;
-      }
-      if (!mounted) return;
-      setState(() {
-        _manualAlgorithm = saved;
-      });
-    } catch (_) {}
-  }
-
-  String get _manualAlgorithmLabel {
-    for (final algo in _handshakeAlgorithms) {
-      if (algo['value'] == _manualAlgorithm) {
-        return algo['label'] ?? _manualAlgorithm;
-      }
-    }
-    return _manualAlgorithm;
-  }
-
-  Future<String> _readAlgorithmForConnect() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final saved = prefs.getString(_algoPrefKey);
-      if (saved != null &&
-          _handshakeAlgorithms.any((a) => a['value'] == saved)) {
-        if (mounted) {
-          setState(() {
-            _manualAlgorithm = saved;
-          });
-        } else {
-          _manualAlgorithm = saved;
-        }
-        return saved;
-      }
-    } catch (_) {}
-    return _manualAlgorithm;
-  }
-
-  Future<bool> _askToPinHandshake(String algorithm, String? serial) async {
-    final serialText = (serial == null || serial.isEmpty) ? 'Unknown' : serial;
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('تثبيت الهاند شيك'),
-        content: Text(
-          'تم اختبار $algorithm بنجاح على الماكينة $serialText.\nهل تريد تثبيته كافتراضي لهذه الماكينة؟',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('لا'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('نعم'),
-          ),
-        ],
-      ),
-    );
-    return result ?? false;
   }
 
   Future<void> _connectSerial() async {
@@ -108,86 +37,65 @@ class _ScanScreenState extends State<ScanScreen> {
     _showLoadingDialog(AppStrings.of(context, 'connecting'));
 
     try {
+      // Connect serial at 38400 baud
+      _log('Opening serial port (38400 baud)...');
       await CutterSerialService().connect();
       if (!mounted) return;
 
-      Navigator.pop(context);
-      _showLoadingDialog(AppStrings.of(context, 'authenticating'));
+      _log('Port opened: ${CutterSerialService().lastOpenPortPath ?? "?"}');
+      Navigator.pop(context); // close "connecting" dialog
+      _showLoadingDialog('Authenticating M180T...');
 
-      final connectAlgorithm = await _readAlgorithmForConnect();
+      // Run Mietubl 180T handshake
+      _log('Starting M180T handshake...');
       final Completer<bool> handshakeCompleter = Completer<bool>();
-      final handshake = MachineHandshake(
+      final handshake = MietublHandshake(
         CutterSerialService(),
         onStatusUpdate: (status) {
-          debugPrint("Handshake Status: $status");
+          debugPrint("Handshake: $status");
+          _log(status);
         },
         onHandshakeComplete: (success) {
+          _log('Handshake result: $success');
           if (!handshakeCompleter.isCompleted) {
             handshakeCompleter.complete(success);
           }
         },
-        forcedAlgorithm: connectAlgorithm,
-        handshakeMode: "manual",
-        persistOnSuccess: false,
       );
 
       handshake.startHandshake();
       bool success = await handshakeCompleter.future.timeout(
-        const Duration(seconds: 60),
-        onTimeout: () => false,
+        const Duration(seconds: 15),
+        onTimeout: () {
+          _log('TIMEOUT - no response from machine');
+          return false;
+        },
       );
       handshake.dispose();
-      if (!mounted) return;
 
-      Navigator.pop(context);
+      if (!mounted) return;
+      Navigator.pop(context); // close "authenticating" dialog
 
       if (success) {
-        final bluetooth = CutterSerialService();
-        final selectedAlgorithm = connectAlgorithm;
-        final serial = bluetooth.serialNumber;
-        bool shouldAskToPin = true;
-        if (serial != null && serial.isNotEmpty) {
-          final cachedAlgo = await bluetooth.getCachedHandshake(serial);
-          final cachedMode = await bluetooth.getCachedHandshakeMode(serial);
-          shouldAskToPin =
-              !(cachedMode == "manual" && cachedAlgo == selectedAlgorithm);
-        }
-
-        if (shouldAskToPin) {
-          final remember = mounted
-              ? await _askToPinHandshake(selectedAlgorithm, serial)
-              : false;
-          if (remember) {
-            await bluetooth.cacheSuccessfulHandshake(
-              selectedAlgorithm,
-              true,
-              mode: "manual",
-              persist: true,
-            );
-          }
-        }
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-                content:
-                    Text(AppStrings.of(context, 'connected_authenticated'))),
-          );
-        }
-        if (mounted) Navigator.of(context).pop(true);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(AppStrings.of(context, 'connected_authenticated')),
+            backgroundColor: const Color(0xFF00FF88),
+          ),
+        );
+        Navigator.of(context).pop(true);
       } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(AppStrings.of(context, 'auth_failed')),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(AppStrings.of(context, 'auth_failed')),
+            backgroundColor: Colors.red,
+          ),
+        );
         await CutterSerialService().disconnect();
       }
     } catch (e) {
-      if (mounted) Navigator.pop(context);
       if (mounted) {
+        Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text("${AppStrings.of(context, 'connection_error')}: $e"),
@@ -252,8 +160,7 @@ class _ScanScreenState extends State<ScanScreen> {
             child: Center(
               child: ConstrainedBox(
                 constraints: BoxConstraints(
-                  maxWidth:
-                      constraints.maxWidth >= 700 ? 560 : constraints.maxWidth,
+                  maxWidth: constraints.maxWidth >= 700 ? 560 : constraints.maxWidth,
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -266,7 +173,7 @@ class _ScanScreenState extends State<ScanScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text(
-                              "Internal Serial Cutter",
+                              "Mietubl 180T Cutter",
                               style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
@@ -274,26 +181,18 @@ class _ScanScreenState extends State<ScanScreen> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              isConnected ? "Connected" : "Disconnected",
+                              isConnected ? "Connected ✅" : "Disconnected",
                               style: TextStyle(
                                 color: isConnected ? Colors.green : Colors.red,
+                                fontWeight: FontWeight.bold,
                               ),
                             ),
+                            const SizedBox(height: 4),
+                            const Text(
+                              "Protocol: M180T UART (38400 baud)",
+                              style: TextStyle(color: Colors.grey, fontSize: 12),
+                            ),
                           ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Card(
-                      color: const Color(0xFF1E1E1E),
-                      child: ListTile(
-                        leading: const Icon(
-                          Icons.lock,
-                          color: Color(0xFF00FF88),
-                        ),
-                        title: const Text('Handshake Algorithm'),
-                        subtitle: Text(
-                          'Current: $_manualAlgorithmLabel\nChange from Protected Settings',
                         ),
                       ),
                     ),
@@ -325,6 +224,34 @@ class _ScanScreenState extends State<ScanScreen> {
                       ),
                       child: const Text('Disconnect'),
                     ),
+                    const SizedBox(height: 24),
+                    // Debug logs
+                    if (_logs.isNotEmpty) ...[
+                      const Text(
+                        'Connection Log:',
+                        style: TextStyle(color: Colors.grey, fontSize: 12, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        height: 200,
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.black,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: ListView.builder(
+                          itemCount: _logs.length,
+                          itemBuilder: (context, index) => Text(
+                            _logs[index],
+                            style: const TextStyle(
+                              color: Colors.greenAccent,
+                              fontSize: 10,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

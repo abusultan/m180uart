@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../services/api_service.dart';
 import '../../core/app_strings.dart';
 import '../../data/models/representative_model.dart';
@@ -338,7 +337,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                 // Machine Type
                 DropdownButtonFormField<String>(
-                  initialValue: _selectedMachineType,
+                  value: _selectedMachineType,
                   items: _machineTypes
                       .map(
                         (type) => DropdownMenuItem(
@@ -422,22 +421,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     prefixIcon: const Icon(
                       Icons.confirmation_number,
                       color: Color(0xFF00FF88),
-                    ),
-                    suffixIcon: IconButton(
-                      icon: const Icon(
-                        Icons.qr_code_scanner,
-                        color: Colors.grey,
-                      ),
-                      onPressed: () async {
-                        final String? scanned = await Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (context) => const _SerialScanScreen(),
-                          ),
-                        );
-                        if (scanned != null && scanned.isNotEmpty) {
-                          _machineSerialController.text = scanned;
-                        }
-                      },
                     ),
                   ),
                   validator: (value) {
@@ -600,72 +583,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _SerialScanScreen extends StatefulWidget {
-  const _SerialScanScreen();
-
-  @override
-  State<_SerialScanScreen> createState() => _SerialScanScreenState();
-}
-
-class _SerialScanScreenState extends State<_SerialScanScreen> {
-  final MobileScannerController _controller = MobileScannerController();
-  bool _found = false;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        title: const Text('Scan Serial'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.flash_on),
-            onPressed: () => _controller.toggleTorch(),
-          ),
-          IconButton(
-            icon: const Icon(Icons.cameraswitch),
-            onPressed: () => _controller.switchCamera(),
-          ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          MobileScanner(
-            controller: _controller,
-            onDetect: (capture) {
-              if (_found) return;
-              final barcode =
-                  capture.barcodes.isNotEmpty ? capture.barcodes.first : null;
-              final raw = barcode?.rawValue?.trim();
-              if (raw != null && raw.isNotEmpty) {
-                _found = true;
-                Navigator.of(context).pop(raw);
-              }
-            },
-          ),
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              child: const Text(
-                'وجّه الكاميرا على QR أو Barcode',
-                style: TextStyle(color: Colors.white70),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
