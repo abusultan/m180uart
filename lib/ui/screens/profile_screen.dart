@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../core/app_strings.dart';
 import 'package:flutter_project/core/serial/machine_handshake.dart';
 import 'package:flutter_project/core/serial/mietubl_protocol.dart';
+import 'package:flutter_project/core/serial/mietubl_cut_sender.dart';
 import '../../services/api_service.dart';
 import 'package:flutter_project/core/serial/serial_service.dart';
 import '../../providers/language_provider.dart';
@@ -154,13 +155,13 @@ class ProfileScreen extends StatelessWidget {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const AlertDialog(
-        backgroundColor: Color(0xFF1E1E1E),
-        content: Row(
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        content: const Row(
           children: [
             SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
             SizedBox(width: 16),
-            Expanded(child: Text('جاري إرسال قص تجريبي...', style: TextStyle(color: Colors.white))),
+            Expanded(child: Text('جاري إرسال القصة التجريبية...', style: TextStyle(color: Colors.white))),
           ],
         ),
       ),
@@ -169,23 +170,32 @@ class ProfileScreen extends StatelessWidget {
     try {
       // Run handshake first
       final ok = await _performHandshakeSync();
-      if (!ok) {
-        throw Exception('فشل الهاند شيك');
-      }
+      if (!ok) throw Exception('فشل الهاند شيك');
 
-      // Send testMachine command via M180T binary protocol
-      await cutter.writeBytes(
-        MietublProtocol.testMachine(),
-        chunkSize: 64,
-        packetDelayMs: 2,
+      // Real PLT cut file (Samsung 2017 半包前膜) embedded directly
+      const String testPlt = 'IN;PA;PU1405,339;PD1412,336;PD1426,352;PD1428,348;PD1448,352;PD1511,351;PD1534,343;PD1552,326;PD1562,304;PD1563,280;PD1554,257;PD1538,239;PD1516,229;PD1491,228;PD601,228;PD578,237;PD561,253;PD550,275;PD550,300;PD558,323;PD575,340;PD597,351;PD621,351;PD1448,351;PD1508,351;PU1778,249;PD1775,243;PD1769,240;PD1762,241;PD1752,223;PD1748,227;PD1730,216;PD1729,223;PD1705,230;PD1686,248;PD1675,271;PD1674,296;PD1683,320;PD1700,339;PD1723,350;PD1749,351;PD1773,342;PD1792,325;PD1803,302;PD1804,276;PD1795,252;PD1778,233;PD1755,222;PD1729,222;PD1705,230;PD1685,247;PD1681,255;PU74,89;PD81,91;PD81,291;PD81,4620;PD88,4618;PD91,4610;PD2327,4610;PD2324,4602;PD2317,4599;PD2317,271;PD2312,238;PD2301,208;PD2284,181;PD2261,156;PD2234,136;PD2205,123;PD2174,116;PD2140,115;PD237,115;PD204,120;PD174,131;PD147,148;PD123,170;PD103,197;PD89,226;PD82,258;PD81,291;PD81,411;PU2316,0;!PG;';
+
+      // Convert PLT text to bytes (each character → its byte value)
+      final pltBytes = testPlt.codeUnits;
+
+      // Convert to hex string (same as Arrays.byteArrayToHexStr in Java)
+      final hexData = pltBytes.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join('');
+
+      // Use MietublCutSender to send with proper protocol framing
+      final sender = MietublCutSender(
+        cutter,
+        onProgress: (p) => debugPrint('TestCut progress: $p%'),
+        onStatus: (s) => debugPrint('TestCut: $s'),
       );
+
+      final success = await sender.sendCutFromBltFile(hexData, fileName: 'test.plt');
 
       if (context.mounted) {
         Navigator.of(context, rootNavigator: true).pop();
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تم إرسال أمر التجربة بنجاح ✅'),
-            backgroundColor: Color(0xFF00FF88),
+          SnackBar(
+            content: Text(success ? 'تم إرسال القصة ✅ - الماكينة تقص الآن' : 'فشل الإرسال'),
+            backgroundColor: success ? const Color(0xFF00FF88) : Colors.redAccent,
           ),
         );
       }
@@ -193,10 +203,7 @@ class ProfileScreen extends StatelessWidget {
       if (context.mounted) {
         Navigator.of(context, rootNavigator: true).pop();
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('فشل: $e'),
-            backgroundColor: Colors.redAccent,
-          ),
+          SnackBar(content: Text('فشل: $e'), backgroundColor: Colors.redAccent),
         );
       }
     }
