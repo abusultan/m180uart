@@ -447,21 +447,11 @@ class _CutSettingsScreenState extends State<CutSettingsScreen> {
         });
       }
 
-      final result = await _appSettings.installApkSilentlyDetailed(apkPath);
-      if (!result.success) {
-        throw Exception(result.message.trim().isEmpty
-            ? 'Silent install failed.'
-            : result.message.trim());
+      final success = await _appSettings.installApk(apkPath);
+      if (!success) {
+        throw Exception('Install prompt failed to launch.');
       }
-
-      if (result.deferred) {
-        _showUpdateSnack(AppStrings.of(context, 'update_started_background'));
-        await _appSettings.closeForBackgroundUpdate();
-        return;
-      }
-
-      await _refreshInstalledVersionInfo();
-      _showUpdateSnack(AppStrings.of(context, 'update_completed_silent'));
+      return;
     } catch (e) {
       final message = AppStrings.of(
         context,
