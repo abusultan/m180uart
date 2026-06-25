@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/app_strings.dart';
 import 'package:flutter_project/core/serial/machine_handshake.dart';
+import 'package:flutter_project/core/serial/mietubl_protocol.dart';
 import '../../services/api_service.dart';
 import 'package:flutter_project/core/serial/serial_service.dart';
 import '../../providers/language_provider.dart';
@@ -12,9 +13,6 @@ import 'attachments_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
-
-  static const String _testFileUrl =
-      'http://www.cutabc.cn:8091/Userfile/Attach/25032415-1430.plt';
 
   void _requestRepresentative(BuildContext context) {
     final user = ApiService().currentUser;
@@ -146,13 +144,13 @@ class ProfileScreen extends StatelessWidget {
     if (!cutter.isConnected) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('السيريال غير متصل'),
+          content: Text('الماكينة غير متصلة - اذهب لشاشة الاتصال أولاً'),
           backgroundColor: Colors.redAccent,
         ),
       );
       return;
     }
-    // Always run handshake before sending to ensure the session is authenticated.
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -160,75 +158,33 @@ class ProfileScreen extends StatelessWidget {
         backgroundColor: Color(0xFF1E1E1E),
         content: Row(
           children: [
-            SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
+            SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
             SizedBox(width: 16),
-            Expanded(
-              child: Text(
-                'جاري تحميل الملف وإرساله...',
-                style: TextStyle(color: Colors.white),
-              ),
-            ),
+            Expanded(child: Text('جاري إرسال قص تجريبي...', style: TextStyle(color: Colors.white))),
           ],
         ),
       ),
     );
 
     try {
-      final serial = cutter.serialNumber?.toUpperCase() ?? '';
-      final isPlt = serial.startsWith("DQ") ||
-          serial.startsWith("DX") ||
-          serial.startsWith("LH");
+      // Run handshake first
       final ok = await _performHandshakeSync();
       if (!ok) {
         throw Exception('فشل الهاند شيك');
       }
 
-      final isPhonefilmMode = cutter.lastHandshakeMode == 'phonefilm';
-
-      final file = await ApiService().downloadFile(_testFileUrl);
-      if (file == null) {
-        throw Exception('فشل تنزيل الملف');
-      }
-      final bytes = await file.readAsBytes();
-      if (bytes.isEmpty) {
-        throw Exception('ملف فارغ');
-      }
-
-      if (isPlt) {
-        await cutter.writeBytes(
-          bytes,
-          chunkSize: bytes.length,
-          packetDelayMs: 0,
-        );
-      } else {
-        final blockSize = 2048;
-        final delayMs = isPhonefilmMode ? 400 : 2;
-        int offset = 0;
-        while (offset < bytes.length) {
-          int end = offset + blockSize;
-          if (end > bytes.length) end = bytes.length;
-          final chunk = bytes.sublist(offset, end);
-          await cutter.writeBytes(
-            chunk,
-            chunkSize: chunk.length,
-            packetDelayMs: 0,
-          );
-          if (delayMs > 0) {
-            await Future.delayed(Duration(milliseconds: delayMs));
-          }
-          offset = end;
-        }
-      }
+      // Send testMachine command via M180T binary protocol
+      await cutter.writeBytes(
+        MietublProtocol.testMachine(),
+        chunkSize: 64,
+        packetDelayMs: 2,
+      );
 
       if (context.mounted) {
         Navigator.of(context, rootNavigator: true).pop();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('تم إرسال الملف بنجاح'),
+            content: Text('تم إرسال أمر التجربة بنجاح ✅'),
             backgroundColor: Color(0xFF00FF88),
           ),
         );
@@ -238,7 +194,7 @@ class ProfileScreen extends StatelessWidget {
         Navigator.of(context, rootNavigator: true).pop();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('فشل الإرسال: $e'),
+            content: Text('فشل: $e'),
             backgroundColor: Colors.redAccent,
           ),
         );
