@@ -36,25 +36,29 @@ class MietublCutSender {
   Future<bool> sendCutFromBltFile(String fileContent, {String fileName = 'cut.blt'}) async {
     _cancelled = false;
 
-    // The .blt file IS the hex-encoded cut data
-    final hexData = fileContent.trim().toUpperCase();
+    // Clean the hex data - remove whitespace, newlines, non-hex chars
+    final hexData = fileContent.replaceAll(RegExp(r'[^0-9A-Fa-f]'), '').toUpperCase();
     if (hexData.isEmpty) {
       onStatus?.call('Error: Empty cut file');
       return false;
     }
+    
+    // Ensure even length
+    final cleanHex = hexData.length.isOdd ? '${hexData}0' : hexData;
 
-    debugPrint('MietublCutSender: file hex length=${hexData.length} (${hexData.length ~/ 2} bytes)');
+    debugPrint('MietublCutSender: cleaned hex length=${cleanHex.length} (${cleanHex.length ~/ 2} bytes)');
+    debugPrint('MietublCutSender: first 40: ${cleanHex.substring(0, cleanHex.length > 40 ? 40 : cleanHex.length)}');
 
     try {
       // Step 1: Build first command (metadata)
       onStatus?.call('Sending metadata...');
-      final firstCmd = _buildFirstCommand(hexData.length, fileName);
-      debugPrint('MietublCutSender: firstCmd=${firstCmd.substring(0, 40)}...');
+      final firstCmd = _buildFirstCommand(cleanHex.length, fileName);
+      debugPrint('MietublCutSender: firstCmd length=${firstCmd.length}');
       await _sendHexPacket(firstCmd);
       await Future.delayed(const Duration(milliseconds: 500));
 
       // Step 2: Split hex data into chunks and send
-      final chunks = _splitHexIntoChunks(hexData, _chunkSize);
+      final chunks = _splitHexIntoChunks(cleanHex, _chunkSize);
       debugPrint('MietublCutSender: ${chunks.length} chunks to send');
 
       for (int i = 0; i < chunks.length; i++) {

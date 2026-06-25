@@ -553,9 +553,24 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       // M180T: The .blt file is a hex-encoded string - read it as text
       final file = _cutFile;
       if (file == null) throw Exception(fileNotFoundMessage);
-      final hexContent = await file.readAsString();
+      
+      String hexContent;
+      try {
+        hexContent = await file.readAsString();
+        debugPrint('M180T cut: file read OK, length=${hexContent.length}');
+      } catch (e) {
+        // If reading as string fails, read as bytes and convert
+        debugPrint('M180T cut: readAsString failed, trying bytes: $e');
+        final bytes = await file.readAsBytes();
+        hexContent = String.fromCharCodes(bytes);
+        debugPrint('M180T cut: read as bytes OK, length=${hexContent.length}');
+      }
 
-      debugPrint('M180T cut: file size=${hexContent.length} hex chars');
+      if (hexContent.trim().isEmpty) {
+        throw Exception('Cut file is empty');
+      }
+
+      debugPrint('M180T cut: first 40 chars: ${hexContent.substring(0, hexContent.length > 40 ? 40 : hexContent.length)}');
 
       final fileName = widget.productItem?.nameEn ?? widget.productItem?.nameAr ?? 'cut.blt';
       final cutSender = MietublCutSender(
@@ -575,7 +590,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
 
       final cutSuccess = await cutSender.sendCutFromBltFile(hexContent, fileName: fileName);
       if (!cutSuccess) {
-        throw Exception('Failed to send cut data to machine');
+        throw Exception('Machine did not accept cut data. Check connection.');
       }
 
       Future<Map<String, dynamic>> decrementRemainingPieces() async {
